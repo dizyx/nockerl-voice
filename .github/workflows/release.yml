@@ -163,6 +163,68 @@ jobs:
       # attempt at this fix put the re-sign after this step, so the signing succeeded, the
       # step went green, and notarization rejected the same untouched Updater binary as
       # before, because the DMG still held the copy made before any of it ran.
+      # Notarization happens TWICE, and the helper exists so the awkward part is written
+      # once. `notarytool submit --wait` EXITS ZERO on a rejection: it fails only on a
+      # submission error, never on Apple refusing the build. Reading the status explicitly
+      # and dumping the log is the only way a failure says anything useful.
+      - name: Write the notarization helper
+        run: |
+          cat > "$RUNNER_TEMP/notarize.sh" <<'SH'
+          #!/usr/bin/env bash
+          # usage: notarize.sh <path-to-submit>
+          set -uo pipefail
+          TARGET="$1"
+          AUTH=(--key "$RUNNER_TEMP/AuthKey.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID")
+          xcrun notarytool submit "$TARGET" "${AUTH[@]}" --wait --output-format json \
+            > "$RUNNER_TEMP/notary.json" || true
+          cat "$RUNNER_TEMP/notary.json"
+          SUB_ID="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("id",""))' "$RUNNER_TEMP/notary.json")"
+          STATUS="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("status",""))' "$RUNNER_TEMP/notary.json")"
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "::error::Notarization returned '$STATUS' for $TARGET (submission $SUB_ID). Apple's reasons follow; each issue names the offending path." >&2
+            if [ -n "$SUB_ID" ]; then
+              # To a FILE, then cat. `notarytool log ... /dev/stdout` fails on the runner
+              # with NSCocoaErrorDomain 512 "Operation not supported".
+              xcrun notarytool log "$SUB_ID" "${AUTH[@]}" "$RUNNER_TEMP/notary-log.json" || true
+              cat "$RUNNER_TEMP/notary-log.json" || true
+            fi
+            exit 1
+          fi
+          SH
+          chmod +x "$RUNNER_TEMP/notarize.sh"
+          echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+        env:
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+
+      # The APP is notarized and stapled BEFORE the DMG is built, and this is not
+      # redundant with notarizing the DMG.
+      #
+      # Stapling attaches the ticket to the FILE it is run on. Stapling only the DMG leaves
+      # the app inside carrying no ticket of its own, so once the user drags it out,
+      # Gatekeeper has to ask Apple over the network whether it was notarized. Online that
+      # succeeds and everything looks fine, which is exactly why it survived: `spctl` on a
+      # connected machine reports "accepted, source=Notarized Developer ID". OFFLINE, or
+      # behind a firewall that blocks Apple's notarization endpoints, the same app is
+      # refused with "cannot be opened because Apple cannot check it for malicious
+      # software". Verified on the 1.0.0 build: `stapler validate` on the app inside the
+      # DMG reported "does not have a ticket stapled to it".
+      #
+      # This also matters for updates specifically. Sparkle mounts the DMG and copies the
+      # app out, so an unstapled app is what every updated install would end up running.
+      - name: Notarize and staple the app
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/export/$APP_NAME.app"
+          # notarytool takes an archive, not a bundle. ditto keeps the symlinks and
+          # extended attributes that a plain `zip` would flatten.
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/app.zip"
+          "$RUNNER_TEMP/notarize.sh" "$RUNNER_TEMP/app.zip"
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+
       - name: Create DMG
         run: |
           DMG="$RUNNER_TEMP/$APP_NAME-${{ steps.ver.outputs.version }}.dmg"
@@ -194,45 +256,28 @@ jobs:
       # Every call carries --timestamp (the secure timestamp Apple asked for) and
       # --options=runtime (the hardened runtime, required for notarization). --force is
       # required because these already carry an ad-hoc signature to replace.
-      - name: Notarize + staple
+      - name: Sign, notarize and staple the DMG
         env:
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
           NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
         run: |
-          echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
-          AUTH=(--key "$RUNNER_TEMP/AuthKey.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID")
-
-          # `notarytool submit --wait` EXITS ZERO even when Apple returns Invalid. It only
-          # fails on a submission error, not on a rejection, so the first run of this
-          # workflow sailed past a rejected build and died at `stapler` with "Record not
-          # found" and "Error 65". That message names the missing ticket, never the reason
-          # the ticket was refused, and the reason is only retrievable from `notarytool
-          # log` using these same credentials, i.e. only from inside this job. So the
-          # status is now read explicitly and the log is printed on anything but Accepted.
-          xcrun notarytool submit "$DMG" "${AUTH[@]}" --wait --output-format json \
-            > "$RUNNER_TEMP/notary.json" || true
-          cat "$RUNNER_TEMP/notary.json"
-          SUB_ID="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("id",""))' "$RUNNER_TEMP/notary.json")"
-          STATUS="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("status",""))' "$RUNNER_TEMP/notary.json")"
-
-          if [ "$STATUS" != "Accepted" ]; then
-            echo "::error::Notarization returned '$STATUS' for submission $SUB_ID. Apple's own reasons follow; each issue names the offending path."
-            # To a FILE, then cat. `notarytool log ... /dev/stdout` fails on the runner
-            # with NSCocoaErrorDomain 512 "Operation not supported", because it writes via
-            # NSData rather than a stream, and that mangled the one output we needed.
-            if [ -n "$SUB_ID" ]; then
-              xcrun notarytool log "$SUB_ID" "${AUTH[@]}" "$RUNNER_TEMP/notary-log.json" || true
-              cat "$RUNNER_TEMP/notary-log.json" || true
-            fi
-            exit 1
-          fi
-
+          set -euo pipefail
+          # SIGN THE DMG ITSELF. create-dmg emits an unsigned disk image, and an unsigned
+          # DMG has no signature for Gatekeeper to evaluate: `spctl -a -t install` on the
+          # 1.0.0 build answered "rejected, source=no usable signature" even though the app
+          # inside was perfectly signed and the ticket was stapled to the image. Signing it
+          # also means the container cannot be altered without detection, not just its
+          # contents.
+          codesign --force --timestamp --sign "$SIGN_ID" "$DMG"
+          "$RUNNER_TEMP/notarize.sh" "$DMG"
           # Stapling REWRITES the DMG, attaching the ticket to the file on disk. Everything
           # downstream, the checksum, the provenance subject and above all the Sparkle
-          # signature, must therefore describe the post-staple bytes.
+          # signature, must describe the post-staple bytes.
           xcrun stapler staple "$DMG"
           xcrun stapler validate "$DMG"
+          # Prove the shipped artefact passes the check a user's machine makes.
+          spctl -a -vvv -t install "$DMG"
 
       - name: Checksums
         run: |
