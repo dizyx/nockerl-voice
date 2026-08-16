@@ -1,3 +1,4 @@
+import AppKit
 import SwiftData
 import SwiftUI
 
@@ -77,16 +78,26 @@ struct MenuBarContent: View {
         // A menu the user chose to open cannot steal focus and cannot appear over anything,
         // so discovery is visible without ever interrupting. Acting on it is a second,
         // separate click, which is the opt-in the real update flow waits for.
+        // ONE item, never both. Offering "Check for Updates" beside "Update Available"
+        // asked the user to check for something the same menu had just told them was
+        // found.
         if updateModel.hasQuietUpdate {
             Button("Update Available…") {
+                // Open the dashboard FIRST. The update flow lives in the sidebar now,
+                // so re-presenting it while no window is on screen is what made this
+                // item look inert: the result had nowhere to appear.
+                openWindow(id: "dashboard")
+                NSApp.activate(ignoringOtherApps: true)
                 updater.openDiscoveredUpdate()
             }
+        } else {
+            Button("Check for Updates…") {
+                openWindow(id: "dashboard")
+                NSApp.activate(ignoringOtherApps: true)
+                updater.checkForUpdates()
+            }
+            .disabled(!updater.canCheckForUpdates)
         }
-
-        Button("Check for Updates…") {
-            updater.checkForUpdates()
-        }
-        .disabled(!updater.canCheckForUpdates)
 
         Button("Quit Nockerl Voice") {
             NSApplication.shared.terminate(nil)

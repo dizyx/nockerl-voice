@@ -110,6 +110,11 @@ struct DashboardView: View {
                 .padding(.horizontal, NockerlSpace.space2)
             }
 
+            // Directly under the nav items, so an update reads as the next thing in the
+            // list rather than as chrome. Renders nothing at all unless there is news, so
+            // the sidebar is unchanged on almost every launch.
+            UpdateNavRow()
+
             Spacer(minLength: 0)
 
             // Settings cog, pinned to the bottom of the panel.

@@ -93,6 +93,22 @@ final class Updater: ObservableObject {
         }
 
         canCheckForUpdates = true
+
+        // Check ONCE at launch when the preference is on, which is what "check for updates
+        // automatically" says and what it was not doing. Sparkle's scheduler works off
+        // `updateCheckInterval`, which defaults to roughly a day and is measured from the
+        // last check, so someone who quits nightly could go a long time without one and
+        // would reasonably conclude the setting did nothing.
+        //
+        // `checkForUpdatesInBackground`, not `checkForUpdates`: the background form reports
+        // through our driver without presenting anything, which is what keeps discovery
+        // quiet. Sparkle's own documentation names this exact call for forcing a check on
+        // every launch, and warns to make it immediately after starting the updater and
+        // only while automatic checks are enabled, because calling it later interferes with
+        // the scheduler.
+        if updater.automaticallyChecksForUpdates {
+            DispatchQueue.main.async { updater.checkForUpdatesInBackground() }
+        }
     }
 
     /// A user-initiated check, from the menu bar. Does nothing until the real key lands.
