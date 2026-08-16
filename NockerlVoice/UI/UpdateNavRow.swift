@@ -16,8 +16,11 @@ import SwiftUI
 /// into. A row in a sidebar the user is already looking at can carry the whole flow, from
 /// discovery through to relaunch, without a single modal.
 ///
-/// It renders NOTHING unless there is something to say. Idle, checking and up-to-date are
-/// all silent, so the sidebar is unchanged for the overwhelming majority of launches.
+/// It renders NOTHING while idle, so the sidebar is unchanged on the overwhelming majority
+/// of launches. Every other state DOES render, including "up to date", because that state
+/// only follows a question the user asked and someone who asks is owed an answer. Silence
+/// there was the first version of this file, and it recreated the very bug the file exists
+/// to fix.
 struct UpdateNavRow: View {
     @ObservedObject private var model = UpdateModel.shared
     /// Set when the user taps an available update, which turns the row into a confirmation.
@@ -29,10 +32,35 @@ struct UpdateNavRow: View {
         let palette = NockerlPalette.resolve(colorScheme)
         Group {
             switch model.phase {
-            case .idle, .checking, .upToDate:
-                // Deliberately empty. A row that said "no updates" would be noise on every
-                // launch forever, to report the state the user already expects.
+            case .idle:
+                // Deliberately empty. A row that said "no updates" on every launch forever
+                // would be noise reporting the state the user already expects.
                 EmptyView()
+
+            case .checking:
+                progress("Checking for updates", fraction: nil, palette: palette)
+
+            case .upToDate:
+                // MUST render, and must acknowledge. This was EmptyView, which recreated
+                // the exact bug this file exists to fix. `showUpdateNotFoundWithError`
+                // hands the driver an acknowledgement block and presents, so the guard that
+                // would otherwise release Sparkle immediately does not fire. With nothing
+                // on screen, nothing ever called `acknowledge()`: pressing Check for
+                // Updates while already current showed no feedback AND stranded the
+                // session, so the NEXT check silently did nothing too, because Sparkle
+                // ignores a check while one is in progress.
+                //
+                // Silence is right for automatic discovery and wrong for an explicit
+                // question. Someone who asks is owed an answer.
+                tappable("You are up to date", icon: "checkmark.circle",
+                         tone: palette.onCanvasMuted) { model.acknowledge() }
+                    .task(id: "uptodate") {
+                        // Clears itself, because this is an answer rather than a
+                        // notification. Acknowledging is what releases Sparkle, so the
+                        // timer is doing real work, not just tidying the view.
+                        try? await Task.sleep(nanoseconds: 4_000_000_000)
+                        model.acknowledge()
+                    }
 
             case .available(let version):
                 if confirming {
