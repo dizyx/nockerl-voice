@@ -1,0 +1,370 @@
+name: Release
+
+# Builds, Developer-ID-signs, notarizes, and publishes the macOS app on a version tag.
+#
+# The trust chain (this is how a downloader verifies the build matches the source):
+#   1. This workflow is public and readable - no hidden steps.
+#   2. GitHub attaches a signed SLSA build-provenance attestation binding the .dmg to THIS
+#      commit and THIS workflow run. Verify:  gh attestation verify NockerlVoice-<ver>.dmg --repo dizyx/nockerl-voice
+#   3. A SHA-256 checksum is published.        Verify:  shasum -a 256 -c checksums.txt
+#   4. Apple notarizes the .dmg.               Verify:  spctl -a -vvv -t install /Applications/NockerlVoice.app
+#
+# Required repo secrets (Settings > Secrets and variables > Actions):
+#   DEVELOPER_ID_CERT_P12       base64 of the "Developer ID Application" .p12
+#   DEVELOPER_ID_CERT_PASSWORD  the .p12 export password
+#   KEYCHAIN_PASSWORD           any random string (a throwaway CI keychain password)
+#   NOTARY_KEY_ID               App Store Connect API key id
+#   NOTARY_ISSUER_ID            App Store Connect issuer id
+#   NOTARY_KEY_P8               base64 of the App Store Connect AuthKey_*.p8
+#   SPARKLE_PRIVATE_KEY         the PRIVATE EdDSA key from Sparkle's generate_keys, whose
+#                               public half is SUPublicEDKey in project.yml. Signs the
+#                               appcast enclosure. Never printed, never committed.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write        # create the GitHub Release
+  id-token: write        # OIDC for the provenance attestation
+  attestations: write    # attach the build-provenance attestation
+
+jobs:
+  release:
+    runs-on: macos-14
+    env:
+      SCHEME: NockerlVoice
+      APP_NAME: NockerlVoice
+      CONFIG: Release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # FULL history, because the build number is the commit count. checkout defaults
+          # to a depth of 1, which would make `git rev-list --count HEAD` return 1 for
+          # every release: not merely wrong, but LOWER than any locally built app, so a
+          # release could look older than the build it was meant to replace.
+          fetch-depth: 0
+
+      - name: Select the newest installed Xcode
+        # The runner image ships several Xcodes and defaults to an older one.
+        # xcodegen emits project format 77, which needs Xcode 16 or newer, so pick
+        # the newest available rather than pinning a version the image may drop.
+        run: |
+          LATEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$LATEST" ]; then echo "No Xcode_*.app found on the runner" >&2; exit 1; fi
+          echo "Selected $LATEST"
+          echo "DEVELOPER_DIR=$LATEST/Contents/Developer" >> "$GITHUB_ENV"
+
+      - name: Derive version
+        id: ver
+        # THREE outputs, and all three are injected into the archive below. Deriving the
+        # name only and letting the build use whatever project.yml happened to say meant
+        # the tag and the binary could disagree, which broke two things at once:
+        #
+        #   1. A tag of v1.3.0 would have produced a DMG named 1.3.0 containing an app
+        #      that reported 1.2.0, because MARKETING_VERSION is a static value in
+        #      project.yml and nothing here overrode it.
+        #   2. Worse, and silently: Sparkle compares CFBundleVersion, which came from the
+        #      static CURRENT_PROJECT_VERSION. Every release would have shipped the SAME
+        #      build number, so no release would ever look newer than the one already
+        #      installed and NO UPDATE WOULD EVER BE OFFERED. The feed would be well
+        #      formed, correctly signed, and inert.
+        #
+        # The build number is the commit count, matching scripts/build-and-install.sh so a
+        # locally built app and a released one are numbered on the same scale.
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "build=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Install tools
+        run: brew install xcodegen create-dmg
+
+      - name: Import Developer ID certificate
+        env:
+          CERT_P12: ${{ secrets.DEVELOPER_ID_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          echo "SIGN_ID=$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F'"' '/Developer ID Application/{print $2; exit}')" >> "$GITHUB_ENV"
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Archive (Developer ID, hardened runtime)
+        run: |
+          xcodebuild archive \
+            -scheme "$SCHEME" -configuration "$CONFIG" \
+            -archivePath "$RUNNER_TEMP/$APP_NAME.xcarchive" \
+            MARKETING_VERSION="${{ steps.ver.outputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.ver.outputs.build }}" \
+            GIT_COMMIT="${{ steps.ver.outputs.sha }}" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="$SIGN_ID" \
+            ENABLE_HARDENED_RUNTIME=YES \
+            OTHER_CODE_SIGN_FLAGS="--timestamp --options=runtime"
+
+      - name: Stage app
+        run: |
+          mkdir -p "$RUNNER_TEMP/export"
+          cp -R "$RUNNER_TEMP/$APP_NAME.xcarchive/Products/Applications/$APP_NAME.app" "$RUNNER_TEMP/export/"
+
+      - name: Re-sign Sparkle's nested helpers with the Developer ID
+        run: |
+          APP="$RUNNER_TEMP/export/$APP_NAME.app"
+          FW="$APP/Contents/Frameworks/Sparkle.framework"
+          if [ ! -d "$FW" ]; then
+            echo "::error::Sparkle.framework is not embedded at $FW. If Sparkle was removed or relocated, drop this step; if it merely moved, point FW at the new path." >&2
+            exit 1
+          fi
+          sign() {
+            [ -e "$1" ] || return 0
+            echo "  signing $1"
+            codesign --force --timestamp --options=runtime --sign "$SIGN_ID" "$1"
+          }
+          # Deepest first.
+          for xpc in "$FW"/Versions/*/XPCServices/*.xpc; do sign "$xpc"; done
+          for v in "$FW"/Versions/*; do
+            sign "$v/Autoupdate"
+            sign "$v/Updater.app"
+          done
+          sign "$FW"
+          # The app last, because everything above just changed underneath it.
+          sign "$APP"
+
+      # Signing inventory, printed BEFORE the submission rather than guessed at after it.
+      # Notarization rejects on nested code far more often than on the app's own
+      # signature, and Sparkle brings a framework carrying its own helper app, an XPC
+      # service and the Autoupdate tool. When Apple rejects, this listing is what says
+      # which of them was at fault.
+      - name: Inspect the signature before submitting
+        run: |
+          APP="$RUNNER_TEMP/export/$APP_NAME.app"
+          codesign --verify --deep --strict --verbose=2 "$APP" || true
+          echo "--- nested code, with the flags notarization actually checks ---"
+          # runtime = hardened runtime, which every executable must carry.
+          find "$APP" -type f \( -perm -u+x -o -name "*.dylib" \) -print0 2>/dev/null \
+            | xargs -0 -I{} sh -c 'printf "%s\n  " "{}"; codesign -d --verbose=2 "{}" 2>&1 | grep -E "flags=|Authority=Developer" | tr "\n" " "; echo' \
+            || true
+          echo "--- entitlements ---"
+          codesign -d --entitlements :- "$APP" 2>&1 || true
+
+      # AFTER the re-sign, and that ordering is the whole point. The DMG is a snapshot:
+      # once it is built, changing the staged app changes nothing inside it. The first
+      # attempt at this fix put the re-sign after this step, so the signing succeeded, the
+      # step went green, and notarization rejected the same untouched Updater binary as
+      # before, because the DMG still held the copy made before any of it ran.
+      - name: Create DMG
+        run: |
+          DMG="$RUNNER_TEMP/$APP_NAME-${{ steps.ver.outputs.version }}.dmg"
+          create-dmg \
+            --volname "$APP_NAME" --window-size 540 380 --icon-size 110 \
+            --icon "$APP_NAME.app" 150 190 --app-drop-link 390 190 \
+            "$DMG" "$RUNNER_TEMP/export/" \
+          || create-dmg "$DMG" "$RUNNER_TEMP/export/"
+          echo "DMG=$DMG" >> "$GITHUB_ENV"
+
+      # Sparkle's helper binaries have to be re-signed with OUR Developer ID. This is not
+      # optional and it is not a workaround.
+      #
+      # `xcodebuild archive` signs the app and the framework BUNDLE, but it does not reach
+      # inside an embedded framework to re-sign the executables it carries. Sparkle carries
+      # several: a whole nested Updater.app, the Autoupdate tool, and XPC services. Built
+      # from SwiftPM they arrive signed ad-hoc, and ad-hoc is exactly what notarization
+      # refuses. Apple's log named it precisely:
+      #
+      #   .../Sparkle.framework/Versions/B/Updater.app/Contents/MacOS/Updater
+      #     "The binary is not signed with a valid Developer ID certificate."
+      #     "The signature does not include a secure timestamp."
+      #
+      # Signing runs INSIDE OUT. A bundle's signature covers its nested contents, so
+      # signing an outer bundle before an inner one invalidates the outer signature the
+      # moment the inner one changes. XPC services first, then Autoupdate, then Updater.app,
+      # then the framework, then the app itself.
+      #
+      # Every call carries --timestamp (the secure timestamp Apple asked for) and
+      # --options=runtime (the hardened runtime, required for notarization). --force is
+      # required because these already carry an ad-hoc signature to replace.
+      - name: Notarize + staple
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          AUTH=(--key "$RUNNER_TEMP/AuthKey.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID")
+
+          # `notarytool submit --wait` EXITS ZERO even when Apple returns Invalid. It only
+          # fails on a submission error, not on a rejection, so the first run of this
+          # workflow sailed past a rejected build and died at `stapler` with "Record not
+          # found" and "Error 65". That message names the missing ticket, never the reason
+          # the ticket was refused, and the reason is only retrievable from `notarytool
+          # log` using these same credentials, i.e. only from inside this job. So the
+          # status is now read explicitly and the log is printed on anything but Accepted.
+          xcrun notarytool submit "$DMG" "${AUTH[@]}" --wait --output-format json \
+            > "$RUNNER_TEMP/notary.json" || true
+          cat "$RUNNER_TEMP/notary.json"
+          SUB_ID="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("id",""))' "$RUNNER_TEMP/notary.json")"
+          STATUS="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("status",""))' "$RUNNER_TEMP/notary.json")"
+
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "::error::Notarization returned '$STATUS' for submission $SUB_ID. Apple's own reasons follow; each issue names the offending path."
+            # To a FILE, then cat. `notarytool log ... /dev/stdout` fails on the runner
+            # with NSCocoaErrorDomain 512 "Operation not supported", because it writes via
+            # NSData rather than a stream, and that mangled the one output we needed.
+            if [ -n "$SUB_ID" ]; then
+              xcrun notarytool log "$SUB_ID" "${AUTH[@]}" "$RUNNER_TEMP/notary-log.json" || true
+              cat "$RUNNER_TEMP/notary-log.json" || true
+            fi
+            exit 1
+          fi
+
+          # Stapling REWRITES the DMG, attaching the ticket to the file on disk. Everything
+          # downstream, the checksum, the provenance subject and above all the Sparkle
+          # signature, must therefore describe the post-staple bytes.
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+
+      - name: Checksums
+        run: |
+          cd "$RUNNER_TEMP" && shasum -a 256 "$(basename "$DMG")" | tee checksums.txt
+
+      - name: Attest build provenance
+        # NEVER BLOCKS THE RELEASE. Provenance is a supply-chain nicety; the notarized DMG
+        # and the update feed are the product, and they must not be held hostage to it.
+        #
+        # It fails on this repo today because artifact attestations are not available for
+        # PRIVATE repositories outside GitHub Enterprise Cloud, and the private repo is
+        # exactly where the pipeline is being shaken out. Left blocking, it stopped the
+        # appcast and the publish, which are the two steps the whole exercise exists to
+        # test. On the public repo it will simply start working and attach.
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: ${{ env.DMG }}
+
+      # Sparkle's update feed. The shipped app polls SUFeedURL (see project.yml), so this
+      # file has to exist and verify before a real SUPublicEDKey ever ships.
+      #
+      # ORDER IS LOAD BEARING. This runs AFTER notarize and staple, because stapling
+      # REWRITES the DMG: it attaches the notarization ticket to the file on disk. A
+      # signature taken before stapling would describe bytes that no longer exist, and
+      # Sparkle would reject the download at the USER rather than here in CI. Signing the
+      # wrong bytes is worse than not signing at all, because it fails silently and late.
+      - name: Sign the DMG for Sparkle and build the appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # Fail the release rather than publish a DMG nobody can update from. A silent
+          # skip here is invisible until a user tries to update months later and cannot,
+          # by which time the release that broke the chain is long merged.
+          if [ -z "${SPARKLE_PRIVATE_KEY:-}" ]; then
+            echo "::error::SPARKLE_PRIVATE_KEY is not set, so the appcast cannot be signed and this release would ship with no update feed. Add it under Settings, Secrets and variables, Actions. Generate the pair with Sparkle's generate_keys: the PUBLIC half becomes SUPublicEDKey in project.yml, the PRIVATE half is this secret." >&2
+            exit 1
+          fi
+
+          # sign_update comes from the RESOLVED SwiftPM package, not a separate download.
+          # That is deliberate: the signer is then by construction the same Sparkle
+          # version that is linked into the app and will verify the signature at runtime.
+          # A separately downloaded tool is a second version that can silently drift from
+          # the one project.yml pins. Resolution is into a temp derived-data path so the
+          # location is deterministic, and the search is scoped to that path rather than
+          # globbing the whole of DerivedData.
+          xcodebuild -resolvePackageDependencies \
+            -project "$APP_NAME.xcodeproj" -scheme "$SCHEME" \
+            -derivedDataPath "$RUNNER_TEMP/dd" >/dev/null
+          SIGN_UPDATE="$(find "$RUNNER_TEMP/dd/SourcePackages/artifacts" -type f -name sign_update -perm -u+x 2>/dev/null | head -1 || true)"
+          if [ -z "$SIGN_UPDATE" ]; then
+            echo "::error::sign_update was not found in the resolved Sparkle package under $RUNNER_TEMP/dd/SourcePackages/artifacts. If Sparkle stopped shipping the tools in its SwiftPM artifact, fetch them from the pinned Sparkle release tarball instead, matching the version pinned in project.yml." >&2
+            exit 1
+          fi
+
+          # The key is passed on STDIN. It is never echoed, never interpolated into a
+          # command line, and never written to a file. stderr is discarded on both
+          # attempts so that no tool diagnostic can carry key material into the log.
+          # The second form exists only because the flag spelling has varied across
+          # Sparkle versions; it is tried only if the first produced nothing.
+          SIG_OUT="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" -f - "$DMG" 2>/dev/null || true)"
+          if [ -z "$SIG_OUT" ]; then
+            SIG_OUT="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" --ed-key-file - "$DMG" 2>/dev/null || true)"
+          fi
+
+          # sign_update usually prints a ready-to-paste attribute fragment, but some
+          # versions print the bare signature. Accept either rather than failing a
+          # release over a formatting difference.
+          ED_SIG="$(printf '%s' "$SIG_OUT" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')"
+          if [ -z "$ED_SIG" ]; then
+            ED_SIG="$(printf '%s' "$SIG_OUT" | tr -d '[:space:]')"
+          fi
+          if [ -z "$ED_SIG" ]; then
+            echo "::error::sign_update produced no signature. Its usage follows; check how this version takes the private key on stdin." >&2
+            "$SIGN_UPDATE" --help >&2 || true
+            exit 1
+          fi
+
+          # Version metadata is read from the BUILT app, not from the tag or project.yml.
+          # Sparkle compares the feed against what the INSTALLED bundle reports, so the
+          # only correct source is the bundle that is actually being shipped. Taking it
+          # from the tag would silently disagree the moment the two drift.
+          APP="$RUNNER_TEMP/export/$APP_NAME.app"
+          PLIST="$APP/Contents/Info.plist"
+          BUILD_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")"
+          SHORT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")"
+          # Derived from the bundle too, so it tracks the deployment target automatically
+          # instead of being a second copy of "14.0" that can go stale.
+          MIN_SYSTEM="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$PLIST" 2>/dev/null || echo '14.0')"
+
+          DMG_NAME="$(basename "$DMG")"
+          LENGTH="$(stat -f%z "$DMG")"
+          PUB_DATE="$(date -u '+%a, %d %b %Y %H:%M:%S +0000')"
+          # The enclosure points at the GitHub Release asset this same run publishes.
+          URL="https://github.com/$REPO/releases/download/$TAG/$DMG_NAME"
+
+          cat > "$RUNNER_TEMP/appcast.xml" <<XML
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>Nockerl Voice</title>
+              <link>https://nockerl.ai/nockerl-voice/appcast.xml</link>
+              <description>Updates for Nockerl Voice.</description>
+              <language>en</language>
+              <item>
+                <title>$SHORT_VERSION</title>
+                <pubDate>$PUB_DATE</pubDate>
+                <sparkle:version>$BUILD_VERSION</sparkle:version>
+                <sparkle:shortVersionString>$SHORT_VERSION</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>$MIN_SYSTEM</sparkle:minimumSystemVersion>
+                <enclosure url="$URL" length="$LENGTH" type="application/octet-stream" sparkle:edSignature="$ED_SIG" />
+              </item>
+            </channel>
+          </rss>
+          XML
+
+          # Well-formedness is checked here rather than discovered by a client. xmllint
+          # ships with macOS, so this needs no extra tooling.
+          xmllint --noout "$RUNNER_TEMP/appcast.xml"
+          # Safe to print: an appcast carries no secret. The signature is public by
+          # design, and is exactly what every client checks against the public key.
+          cat "$RUNNER_TEMP/appcast.xml"
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.DMG }}
+            ${{ runner.temp }}/checksums.txt
+            ${{ runner.temp }}/appcast.xml
+          generate_release_notes: true

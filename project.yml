@@ -1,0 +1,208 @@
+# XcodeGen spec: generate the Xcode project with `xcodegen generate`.
+# The generated NockerlVoice.xcodeproj is git-ignored; this file is the source of truth.
+name: NockerlVoice
+options:
+  bundleIdPrefix: com.dizyx
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+# A `Dev` build configuration so a side-by-side dev install (different
+# bundle id) can be tested without touching the production build. Debug/Release
+# stay production. `Dev` is a debug-variant (fast build, assertions on).
+# NOTE: `configs:` must be a TOP-LEVEL key (a sibling of name/options/settings/
+# targets), not nested under `options:`. XcodeGen reads it from the top level.
+configs:
+  Debug: debug
+  Release: release
+  Dev: debug
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: com.dizyx.nockerlvoice
+    PRODUCT_NAME: NockerlVoice
+    SWIFT_VERSION: "5.0"            # Swift 6 concurrency adopted incrementally
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"         # ad-hoc by default; build-and-install.sh overrides with a stable identity
+    ENABLE_HARDENED_RUNTIME: "NO"   # local/dev builds; the release workflow enables it for notarization
+    MARKETING_VERSION: "1.0.0"   # the public debut; release builds take this from the tag
+    CURRENT_PROJECT_VERSION: "12"   # overridden per build from git by scripts/build-and-install.sh
+    GIT_COMMIT: "dev"               # ditto; "dev" means the build skipped the script
+    COMBINE_HIDPI_IMAGES: "YES"
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+# SPM dependencies. Defined here (project.yml is the source of truth) so they
+# survive `xcodegen generate`; the generated .xcodeproj is git-ignored.
+#
+# NockerlDesign is the shared design-system package, consumed as a versioned
+# dependency from its public repository. SwiftPM resolves it on the first build,
+# so no sibling checkout is needed. Bump the version here to take a new release.
+packages:
+  NockerlDesign:
+    url: https://github.com/dizyx/nockerl-design.git
+    from: "2.2.0"
+  # LAME (libmp3lame) as a source-compiled SPM C target: macOS has no native MP3
+  # encoder. Static-links into the app (notarization-clean). LGPL; satisfied by this
+  # app being open-source. See THIRD-PARTY-LICENSES.md.
+  swift-lame:
+    url: https://github.com/Phisto/swift-lame
+    from: "3.100.0"
+  # Sparkle: the standard updater for notarized, directly-distributed Mac apps.
+  # The Mac App Store is not an option (the global hotkey and paste insertion require an
+  # un-sandboxed app, which MAS forbids), so Sparkle handles over-the-air updates. The
+  # feed lives on nockerl.ai; DMG assets stay on GitHub Releases. Pinned at 2.9.5, the
+  # current stable, because it carries a symlink-handling security fix; `from:` allows
+  # later 2.x but never resolves below that fix.
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.9.5"
+targets:
+  NockerlVoice:
+    type: application
+    platform: macOS
+    # Per-config overrides for the side-by-side DEV build only. Debug/Release
+    # are untouched here. They keep the production bundle id / name from the
+    # project-level `settings.base`. Target-level `configs.Dev` overrides the base,
+    # so only the Dev config gets the isolated bundle id + dev name.
+    settings:
+      base:
+        # Production display name, expanded into CFBundleDisplayName at build time.
+        # Kept as a build setting so the Dev config can swap it without touching the
+        # production Info.plist value. (The `info:` block itself is not per-config.)
+        NOCKERL_DISPLAY_NAME: "Nockerl Voice"
+      configs:
+        Dev:
+          PRODUCT_BUNDLE_IDENTIFIER: com.dizyx.nockerlvoice.dev
+          PRODUCT_NAME: NockerlVoiceDev
+          NOCKERL_DISPLAY_NAME: "Nockerl Voice Dev"
+    dependencies:
+      - package: NockerlDesign
+        product: NockerlDesign
+      - package: swift-lame
+        product: lame
+      - package: Sparkle
+        product: Sparkle
+    sources:
+      - path: NockerlVoice
+        excludes:
+          - "Info.plist"
+          - "NockerlVoice.entitlements"
+    info:
+      path: NockerlVoice/Info.plist
+      properties:
+        LSUIElement: true          # menu-bar only, no dock icon
+        # Bound to a build setting so the Dev config can display "Nockerl Voice Dev"
+        # while Debug/Release keep "Nockerl Voice" (the base value, unchanged). The info:
+        # block itself is generated once and is not per-config, so the name must come from
+        # a setting that varies per config.
+        CFBundleDisplayName: "$(NOCKERL_DISPLAY_NAME)"
+        # The MENU BAR and the app menu read CFBundleName, NOT CFBundleDisplayName.
+        # Without this it falls back to PRODUCT_NAME, which is the unspaced build
+        # artefact name ("NockerlVoice" / "NockerlVoiceDev"), so the menu bar showed a
+        # name no user should ever see. Bound to the same setting as the display name so
+        # the two cannot drift, and so the Dev config gets "Nockerl Voice Dev" too.
+        CFBundleName: "$(NOCKERL_DISPLAY_NAME)"
+        # Version keys MUST be declared here and bound to the build settings. XcodeGen
+        # writes its own defaults ("1.0" / "1") into the generated Info.plist otherwise,
+        # which is what shipped until 2026-08-01: MARKETING_VERSION/CURRENT_PROJECT_VERSION
+        # were set in `settings` but nothing referenced them, so the bundle always said 1.0 (1).
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        # Stamped from git at build time so every install is identifiable (shown
+        # bottom-right on the Settings screen).
+        GitCommit: "$(GIT_COMMIT)"
+        # Sparkle auto-update. This SUFeedURL is PERMANENT: it is compiled into every
+        # shipped binary, and changing it later orphans every existing install. The feed
+        # lives on nockerl.ai (a domain we own, on our Cloudflare nameservers); DMG assets
+        # are on GitHub Releases. That path is LIVE: nockerl.ai 302s it to the
+        # releases/latest/download/appcast.xml asset, so the feed follows each release
+        # with no site deploy and cannot go stale. It returns 404 only until the first
+        # tagged release publishes an appcast.
+        SUFeedURL: "https://nockerl.ai/nockerl-voice/appcast.xml"
+        # The REAL EdDSA public key. Sparkle verifies every downloaded update against it,
+        # so an update signed by any other key is refused. Public by design: it ships in
+        # every binary and secures nothing by being secret. Its private half lives only in
+        # the release keychain and the SPARKLE_PRIVATE_KEY Actions secret, and never here.
+        #
+        # This landed together with the appcast generation step, in that order, because a
+        # real key flips Updater.isConfigured true and starts every install polling the
+        # feed. Losing the private half is unrecoverable: existing installs will reject
+        # anything signed by a replacement key, so they could never be updated again.
+        #
+        # The feed is produced by the release workflow, which signs the notarized DMG with
+        # the private half (the SPARKLE_PRIVATE_KEY repo secret) and attaches appcast.xml
+        # to the GitHub Release. Serving it at the URL above is a separate concern: the
+        # workflow only produces and attaches the file.
+        SUPublicEDKey: "YM+N+sGiHaOLmY1FF7U8fleyw6PnYJlsiXJlktrq4+4="
+        # PRIVACY: Sparkle's optional anonymous system profile stays OFF. The README
+        # promises no telemetry; an update check already exposes IP and version, nothing more.
+        # NO is already the default when absent; set explicitly here, and also enforced in code.
+        SUEnableSystemProfiling: false
+        NSMicrophoneUsageDescription: "Nockerl Voice records your microphone while you dictate so your speech can be transcribed."
+        NSAppleEventsUsageDescription: "Nockerl Voice pastes transcribed text into the app you are currently using."
+        # macOS 15+ gates connections to local-network addresses behind the Local Network permission.
+        NSLocalNetworkUsageDescription: "Nockerl Voice connects to a transcription server on your local network to transcribe your audio."
+        # A local transcription server may be plain http; allow cleartext so URLSession isn't blocked by ATS.
+        # IMPORTANT: do NOT add NSAllowsLocalNetworking here. Its presence makes macOS IGNORE
+        # NSAllowsArbitraryLoads (Apple docs), which silently re-blocked the http:// model endpoint.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+    entitlements:
+      path: NockerlVoice/NockerlVoice.entitlements
+      properties:
+        com.apple.security.app-sandbox: false   # global hotkey + Accessibility paste need an un-sandboxed app
+  NockerlVoiceTests:
+    type: bundle.unit-test
+    platform: macOS
+    dependencies:
+      - package: swift-lame       # AudioEncoder (compiled into the test bundle) imports lame
+        product: lame
+    sources:
+      - path: NockerlVoiceTests
+      - path: NockerlVoice/Transcription    # compile code-under-test into the (non-hosted) test bundle
+      # TranscriptionError builds the History link text from DashboardLink, which lives in
+      # the App layer this bundle does not otherwise compile. Pulled in as a SINGLE FILE
+      # rather than the whole App directory: the file imports only Foundation, and
+      # DashboardLink is deliberately kept outside the MainActor router so non-isolated
+      # code can read it. Adding the directory would drag the SwiftUI and AppKit app layer
+      # into a non-hosted bundle.
+      - path: NockerlVoice/App/DashboardRouter.swift
+      - path: NockerlVoice/Audio
+      - path: NockerlVoice/Hotkey
+      - path: NockerlVoice/Settings
+      - path: NockerlVoice/Insertion    # TextInserter (AppKit-only, no app-internal deps): clipboard/degradation tests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: "YES"      # test bundles need an auto-generated Info.plist
+schemes:
+  NockerlVoice:
+    build:
+      targets:
+        # App builds for run/archive/etc.; the test action builds only the test
+        # target, which pulls the app in as its host dependency. Listing the app
+        # for `testing` too double-produces its swiftmodule.
+        NockerlVoice: [running, profiling, archiving, analyzing]
+        NockerlVoiceTests: [testing]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - NockerlVoiceTests
+    archive:
+      config: Release
+  # Side-by-side dev build. Builds the same app target under the `Dev`
+  # configuration, which overrides PRODUCT_BUNDLE_IDENTIFIER + PRODUCT_NAME so the
+  # result is a separate installable app (com.dizyx.nockerlvoice.dev / NockerlVoiceDev.app).
+  # Does NOT touch the production Debug/Release configs or the NockerlVoice scheme.
+  NockerlVoice-Dev:
+    build:
+      targets:
+        NockerlVoice: [running, profiling, archiving, analyzing]
+        NockerlVoiceTests: [testing]
+    run:
+      config: Dev
+    test:
+      config: Dev
+      targets:
+        - NockerlVoiceTests
+    archive:
+      config: Dev

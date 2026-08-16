@@ -1,0 +1,80 @@
+name: CI
+
+# Build + test gate for every branch push and every pull request. This is the
+# MISSING build-and-test CI - release.yml is a RELEASE pipeline (tag-only,
+# sign/notarize/publish) and never runs tests. This workflow is the automated gate
+# for external contributors' PRs once the app goes OSS.
+#
+# Deliberately NO secrets, NO signing, NO notarization, NO publishing: an unsigned
+# build (`CODE_SIGNING_ALLOWED=NO`) must succeed for a PR from a fork with zero
+# repo secrets available. If a step would need a secret, it does not belong here.
+#
+# Trigger non-overlap with release.yml: release.yml fires on `push: tags:
+# ["v*.*.*"]`. This workflow fires on BRANCH pushes (never tags) and pull requests,
+# so the two never both run for the same push.
+
+on:
+  push:
+    # Branch pushes only. Tag pushes (v*.*.*) are release.yml's trigger and are
+    # excluded here so CI never double-runs on a release tag. (GitHub only matches
+    # tag pushes against `tags:` filters, so branch pushes are unaffected; the
+    # branches-ignore is defensive + documents the non-overlap.)
+    branches-ignore: ["v*.*.*"]
+  pull_request: {}
+
+# Least privilege: a PR from an external fork must be able to run this with the
+# read-only contents permission only. No write, no id-token, no attestations.
+permissions:
+  contents: read
+
+# Cancel a superseded run for the same ref (a newer push to the same branch/PR
+# supersedes the in-flight one) to keep the queue lean.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: macos-14
+    env:
+      SCHEME: NockerlVoice      # the PRODUCTION scheme ('s NockerlVoice-Dev is NOT built here)
+      CONFIG: Debug             # production Debug config (fast, assertions on; matches the scheme's test action)
+    steps:
+      - uses: actions/checkout@v4
+
+      # Prose gate: fail fast on em-dash / en-dash violations across every tracked
+      # file BEFORE spending time on xcodegen + a full build. Bare form (no
+      # --staged) = check every tracked file, matching the pre-commit hook but as
+
+      # A conflicted merge can reach a branch when a push is chained after a
+      # `git merge` that failed: the merge stops, the push still runs, and the
+      # remote tree is rebuilt from a working tree that still has markers in it.
+      # Swift will fail to compile on those, but this fails in seconds instead
+      # of after a full toolchain install, and it names the file.
+      - name: Check for merge-conflict markers
+        run: |
+          if git grep -In -E '^(<{7}|={7}|>{7})( |$)' -- . ':!.github/workflows/ci.yml'; then
+            echo "::error::Merge-conflict markers committed. Resolve the merge and recommit." >&2
+            exit 1
+          fi
+          echo "No conflict markers."
+
+      - name: Install tools
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (unsigned)
+        run: |
+          xcodebuild build \
+            -scheme "$SCHEME" -configuration "$CONFIG" \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Test
+        run: |
+          xcodebuild test \
+            -scheme "$SCHEME" -configuration "$CONFIG" \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO
