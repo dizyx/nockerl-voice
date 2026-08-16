@@ -43,13 +43,7 @@ Be clear-eyed about this: the app does nothing useful until one of those is set 
 
 ## Install
 
-Homebrew:
-
-```
-brew install --cask dizyx/tap/nockerl-voice
-```
-
-Or download the notarized `.dmg` from the [latest release](../../releases/latest) and drag Nockerl Voice into your Applications folder.
+Download the notarized `.dmg` from the [latest release](../../releases/latest) and drag Nockerl Voice into your Applications folder.
 
 Every release is built and published in the open, so you can confirm a download matches this source before you trust it:
 
@@ -61,11 +55,10 @@ spctl -a -vvv -t install /Applications/NockerlVoice.app                       # 
 
 ## Permissions
 
-Nockerl Voice needs three macOS permissions and asks for each one the first time it is needed:
+Nockerl Voice needs two macOS permissions and asks for each one the first time it is needed:
 
 - **Microphone**, to record your voice.
-- **Input Monitoring**, so the global Right Command hotkey works no matter which app is in front. The hotkey is a system-wide `CGEventTap`, and macOS puts that behind this permission.
-- **Accessibility**, to paste the transcript into the frontmost app.
+- **Accessibility**, for both halves of the job: pasting the transcript into the frontmost app, and the system-wide `CGEventTap` behind the Right Command hotkey, so it works no matter which app is in front.
 
 **The app is deliberately not sandboxed.** A system-wide keyboard tap and pasting into other apps are both impossible from inside the App Sandbox, so Nockerl Voice ships without it. That is a real tradeoff and worth saying plainly: an app that can watch your keyboard deserves scrutiny. Three things are meant to earn your trust instead. The source is right here. Every release is built in public with signed provenance you can verify (see [Install](#install)). And the keyboard tap exists only to catch the Right Command hotkey and the few keys that drive the recording popup; it never records or transmits what you type.
 
