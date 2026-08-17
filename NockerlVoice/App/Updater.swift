@@ -119,8 +119,23 @@ final class Updater: ObservableObject {
         // only while automatic checks are enabled, because calling it later interferes with
         // the scheduler.
         if updater.automaticallyChecksForUpdates {
-            DebugLog.write("update: launch check scheduled (automatic checks on)")
-            DispatchQueue.main.async { updater.checkForUpdatesInBackground() }
+            // SYNCHRONOUS, and that is the whole fix. This was
+            // `DispatchQueue.main.async { ... }`, which defers to the next runloop cycle,
+            // and the next runloop cycle is precisely the window Sparkle's own header says
+            // to beat:
+            //
+            //   "an update cycle is started in the next main runloop cycle"
+            //   "After starting the updater and BEFORE the next runloop cycle, one of
+            //    -checkForUpdates, -checkForUpdatesInBackground, or
+            //    -checkForUpdateInformation can be invoked."
+            //
+            // Deferred, the call landed after Sparkle had already begun its own cycle, and
+            // `checkForUpdatesInBackground` documents that it does nothing while a session
+            // is in progress. So it was swallowed silently on every launch. The log showed
+            // the check being scheduled and then no outcome, which read like a broken
+            // delegate; the delegate was fine and the call never really happened.
+            DebugLog.write("update: launch check (automatic checks on)")
+            updater.checkForUpdatesInBackground()
         } else {
             DebugLog.write("update: no launch check (automatic checks off)")
         }

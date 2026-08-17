@@ -140,6 +140,26 @@ final class NockerlUpdateDriver: NSObject, SPUUserDriver {
     /// here, and it is refused outright while a dictation is in flight. There is deliberately
     /// no queue and no retry: a missed panel is recoverable (the quiet indicator still shows,
     /// and the menu item still works), whereas an interrupted dictation is not.
+    /// The last phase KIND written to the log, so progress ticks do not repeat a line.
+    private var lastLoggedLabel = ""
+
+    /// The phase reduced to its kind, dropping the payload. Two downloads at 41% and 42%
+    /// are the same event as far as a log is concerned; a download becoming an extraction
+    /// is not.
+    private static func label(for phase: UpdatePhase) -> String {
+        switch phase {
+        case .idle: return "idle"
+        case .checking: return "checking"
+        case .available(let version): return "available \(version)"
+        case .downloading: return "downloading"
+        case .extracting: return "extracting"
+        case .readyToInstall: return "ready to install"
+        case .installing: return "installing"
+        case .upToDate: return "up to date"
+        case .failed(let message): return "FAILED :: \(message)"
+        }
+    }
+
     private func present(_ phase: UpdatePhase) {
         // EVERY phase transition is logged, including the ones that are refused.
         //
@@ -153,10 +173,17 @@ final class NockerlUpdateDriver: NSObject, SPUUserDriver {
         // is in flight, which is correct, but an update that vanishes for a reason the user
         // cannot see is exactly the kind of thing that gets reported as a bug.
         guard !DictationActivity.shared.isBusy else {
-            DebugLog.write("update: phase \(phase) SUPPRESSED, dictation in flight")
+            DebugLog.write("update: \(Self.label(for: phase)) SUPPRESSED, dictation in flight")
             return
         }
-        DebugLog.write("update: \(phase)")
+        // Log TRANSITIONS, not ticks. Download and extraction publish a new fraction many
+        // times a second, and logging each one buried a whole update in hundreds of
+        // near-identical lines, which defeats the point of having a log at all.
+        let label = Self.label(for: phase)
+        if label != lastLoggedLabel {
+            lastLoggedLabel = label
+            DebugLog.write("update: \(label)")
+        }
         model.setPhase(phase)
         model.isPanelPresented = true
     }
