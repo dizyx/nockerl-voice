@@ -343,7 +343,6 @@ final class NockerlUpdateDriver: NSObject, SPUUserDriver {
     }
 
     func dismissUpdateInstallation() {
-        DebugLog.write("update: session dismissed")
         // Sparkle is tearing the session down. Release anything still held so the updater can
         // never be left waiting on a reply that will not come.
         model.drainPendingReplies()
@@ -351,9 +350,15 @@ final class NockerlUpdateDriver: NSObject, SPUUserDriver {
         // reporting a found update, and resetting to idle here is what made the row flash
         // and disappear: the log showed FOUND and then "session dismissed" one line later.
         // The session is over; the update still exists.
+        // Says WHICH branch was taken, because that is the only thing worth knowing here
+        // and the two outcomes used to log identically. "session dismissed" appeared both
+        // when a discovery was correctly preserved and when it was silently wiped, which
+        // made the log useless for the one question being asked of it.
         if let discovered = model.discovered {
+            DebugLog.write("update: session ended, holding \(discovered)")
             model.setPhase(.available(version: discovered))
         } else {
+            DebugLog.write("update: session ended, nothing to hold")
             model.setPhase(.idle)
         }
         model.isPanelPresented = false
