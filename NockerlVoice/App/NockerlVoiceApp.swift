@@ -9,6 +9,8 @@ import SwiftUI
 struct NockerlVoiceApp: App {
     @StateObject private var controller = DictationController()
     @StateObject private var permissions = PermissionsManager()
+    /// Solely for `applicationShouldHandleReopen`, which has no SwiftUI scene equivalent.
+    @NSApplicationDelegateAdaptor(NockerlAppDelegate.self) private var appDelegate
 
     init() {
         // Register the bundled Outfit / Space Mono faces with CoreText BEFORE first
@@ -128,6 +130,8 @@ private struct MenuBarLabel: View {
     /// which is exactly when the only bump happens. Held here instead, and replayed once
     /// the welcome is done (A-F2).
     @State private var pendingGuidance = false
+    /// Dock clicks and relaunch attempts, which both mean "bring the app back".
+    @ObservedObject private var reopen = ReopenRequest.shared
 
     var body: some View {
         // The Voice mark as a menu-bar TEMPLATE image: macOS draws only its alpha and
@@ -198,6 +202,16 @@ private struct MenuBarLabel: View {
                 guard shown, pendingGuidance else { return }
                 pendingGuidance = false
                 surfaceGuidance()
+            }
+            // The user clicked the Dock icon, or tried to launch an already-running app,
+            // with nothing on screen. Both mean the same thing and both did nothing before:
+            // there was no application delegate at all, so the signal had no listener.
+            //
+            // It lives here because the delegate cannot reach SwiftUI's `openWindow`, while
+            // this view already holds it for the launch hook.
+            .onChange(of: reopen.id) { _, _ in
+                openWindow(id: "dashboard")
+                NSApp.activate(ignoringOtherApps: true)
             }
     }
 
