@@ -461,6 +461,17 @@ jobs:
           open("cask.rb", "w").write(out)
           PY
 
+          # A cask is Ruby, and a malformed one breaks `brew` for everyone who has the tap,
+          # not just this release. The edit above is two regex substitutions, which is
+          # exactly the kind of thing that works for a hundred releases and then does not.
+          # ruby ships with macOS, so this costs nothing.
+          if ! ruby -c cask.rb >/dev/null 2>&1; then
+            echo "::error::The edited cask is not valid Ruby, so it was NOT pushed. The tap still holds the previous version."
+            ruby -c cask.rb || true
+            cat cask.rb
+            exit 1
+          fi
+
           B64="$(base64 < cask.rb | tr -d '\n')"
           python3 - "$BLOB" "$B64" "$VERSION" > payload.json <<'PY'
           import json, sys
