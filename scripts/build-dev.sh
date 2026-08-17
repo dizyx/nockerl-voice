@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# build-dev.sh - build the side-by-side DEV app (NockerlVoiceDev.app) under the
+# build-dev.sh - build the side-by-side DEV app (Nockerl Voice Dev.app) under the
 # `Dev` build configuration, WITHOUT touching the production Nockerl Voice install.
 #
 # WHAT THIS IS FOR
 #   The Dev config overrides PRODUCT_BUNDLE_IDENTIFIER to
-#   com.dizyx.nockerlvoice.dev and PRODUCT_NAME to NockerlVoiceDev, so this builds
+#   com.dizyx.nockerlvoice.dev and PRODUCT_NAME to "Nockerl Voice Dev", so this builds
 #   a SEPARATE installable app. The new bundle id gets its OWN UserDefaults, Keychain,
 #   Application Support/Recordings, Logs, and fresh TCC grants (Microphone / Input
 #   Monitoring / Accessibility are all keyed on bundle id) - so a genuine macOS
@@ -29,9 +29,9 @@
 #
 # ⚠️  THIS SCRIPT NEVER INSTALLS OR LAUNCHES
 #   It only compiles and leaves the built .app in DerivedData. It NEVER writes to
-#   /Applications/NockerlVoice.app and never auto-launches anything. To run the dev app,
+#   "/Applications/Nockerl Voice.app" and never auto-launches anything. To run the dev app,
 #   `open` the built path printed below - or install it manually to
-#   /Applications/NockerlVoiceDev.app.
+#   "/Applications/Nockerl Voice Dev.app".
 #
 # ⚠️  THE SIGNING IDENTITY MUST BE STABLE. DO NOT PUT IT BACK TO AD-HOC.
 #   This script used to default to ad-hoc ("-"), and that made the dev build useless for
@@ -88,7 +88,7 @@ if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
 fi
 
 echo "==> Building $SCHEME ($CONFIG) with identity '$IDENTITY'"
-echo "==> DEV build - does NOT touch /Applications/NockerlVoice.app"
+echo "==> DEV build - does NOT touch /Applications/Nockerl Voice.app"
 xcodebuild \
   -scheme "$SCHEME" \
   -configuration "$CONFIG" \
@@ -99,7 +99,7 @@ xcodebuild \
   GIT_COMMIT="$GIT_SHA" \
   build
 
-BUILT="$DERIVED/Build/Products/$CONFIG/NockerlVoiceDev.app"
+BUILT="$DERIVED/Build/Products/$CONFIG/Nockerl Voice Dev.app"
 if [[ ! -d "$BUILT" ]]; then
   echo "error: dev build product not found at $BUILT" >&2
   exit 1

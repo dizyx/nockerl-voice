@@ -43,7 +43,13 @@ Be clear-eyed about this: the app does nothing useful until one of those is set 
 
 ## Install
 
-Download the notarized `.dmg` from the [latest release](../../releases/latest) and drag Nockerl Voice into your Applications folder.
+Homebrew:
+
+```
+brew install --cask dizyx/tap/nockerl-voice
+```
+
+Or download the notarized `.dmg` from the [latest release](../../releases/latest) and drag Nockerl Voice into your Applications folder.
 
 Every release is built and published in the open, so you can confirm a download matches this source before you trust it:
 

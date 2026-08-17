@@ -19,7 +19,18 @@ configs:
 settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: com.dizyx.nockerlvoice
-    PRODUCT_NAME: NockerlVoice
+    # SPACED, because this is the name a user reads in Finder, in the Dock and in the
+    # application menu. The build artefacts stay unspaced: the DMG filename and the
+    # xcarchive are derived separately in the release workflow, since a space becomes %20 in
+    # a download URL and in the appcast enclosure that every installed copy parses.
+    PRODUCT_NAME: "Nockerl Voice"
+    # The MODULE name is pinned separately and must stay unspaced. PRODUCT_NAME drives both
+    # the bundle name and, by default, the Swift module name, so spacing the product broke
+    # every test with "Unable to find module dependency: 'NockerlVoice'": Xcode had derived
+    # `Nockerl_Voice` while `@testable import NockerlVoice` still asked for the old one.
+    # Pinning it keeps the import stable no matter what the app is called, and keeps the Dev
+    # configuration importable by the same test target.
+    PRODUCT_MODULE_NAME: NockerlVoice
     SWIFT_VERSION: "5.0"            # Swift 6 concurrency adopted incrementally
     CODE_SIGN_STYLE: Manual
     CODE_SIGN_IDENTITY: "-"         # ad-hoc by default; build-and-install.sh overrides with a stable identity
@@ -71,7 +82,7 @@ targets:
       configs:
         Dev:
           PRODUCT_BUNDLE_IDENTIFIER: com.dizyx.nockerlvoice.dev
-          PRODUCT_NAME: NockerlVoiceDev
+          PRODUCT_NAME: "Nockerl Voice Dev"
           NOCKERL_DISPLAY_NAME: "Nockerl Voice Dev"
     dependencies:
       - package: NockerlDesign
@@ -191,7 +202,7 @@ schemes:
       config: Release
   # Side-by-side dev build. Builds the same app target under the `Dev`
   # configuration, which overrides PRODUCT_BUNDLE_IDENTIFIER + PRODUCT_NAME so the
-  # result is a separate installable app (com.dizyx.nockerlvoice.dev / NockerlVoiceDev.app).
+  # result is a separate installable app (com.dizyx.nockerlvoice.dev / "Nockerl Voice Dev.app").
   # Does NOT touch the production Debug/Release configs or the NockerlVoice scheme.
   NockerlVoice-Dev:
     build:

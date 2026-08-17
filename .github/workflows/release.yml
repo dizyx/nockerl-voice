@@ -7,7 +7,7 @@ name: Release
 #   2. GitHub attaches a signed SLSA build-provenance attestation binding the .dmg to THIS
 #      commit and THIS workflow run. Verify:  gh attestation verify NockerlVoice-<ver>.dmg --repo dizyx/nockerl-voice
 #   3. A SHA-256 checksum is published.        Verify:  shasum -a 256 -c checksums.txt
-#   4. Apple notarizes the .dmg.               Verify:  spctl -a -vvv -t install /Applications/NockerlVoice.app
+#   4. Apple notarizes the .dmg.               Verify:  spctl -a -vvv -t install "/Applications/Nockerl Voice.app"
 #
 # Required repo secrets (Settings > Secrets and variables > Actions):
 #   DEVELOPER_ID_CERT_P12       base64 of the "Developer ID Application" .p12
@@ -35,7 +35,14 @@ jobs:
     runs-on: macos-14
     env:
       SCHEME: NockerlVoice
-      APP_NAME: NockerlVoice
+      # The bundle name as a user reads it. Every path built from it is quoted, because
+      # it now contains a space.
+      APP_NAME: Nockerl Voice
+      # The artefact name, deliberately unspaced. It names the DMG and the xcarchive. A
+      # space here would become %20 in the download URL AND in the appcast enclosure that
+      # every installed copy parses, so the file people fetch keeps a plain name even though
+      # the app inside it does not.
+      APP_SLUG: NockerlVoice
       CONFIG: Release
     steps:
       - uses: actions/checkout@v4
@@ -104,7 +111,7 @@ jobs:
         run: |
           xcodebuild archive \
             -scheme "$SCHEME" -configuration "$CONFIG" \
-            -archivePath "$RUNNER_TEMP/$APP_NAME.xcarchive" \
+            -archivePath "$RUNNER_TEMP/$APP_SLUG.xcarchive" \
             MARKETING_VERSION="${{ steps.ver.outputs.version }}" \
             CURRENT_PROJECT_VERSION="${{ steps.ver.outputs.build }}" \
             GIT_COMMIT="${{ steps.ver.outputs.sha }}" \
@@ -116,7 +123,7 @@ jobs:
       - name: Stage app
         run: |
           mkdir -p "$RUNNER_TEMP/export"
-          cp -R "$RUNNER_TEMP/$APP_NAME.xcarchive/Products/Applications/$APP_NAME.app" "$RUNNER_TEMP/export/"
+          cp -R "$RUNNER_TEMP/$APP_SLUG.xcarchive/Products/Applications/$APP_NAME.app" "$RUNNER_TEMP/export/"
 
       - name: Re-sign Sparkle's nested helpers with the Developer ID
         run: |
@@ -227,7 +234,7 @@ jobs:
 
       - name: Create DMG
         run: |
-          DMG="$RUNNER_TEMP/$APP_NAME-${{ steps.ver.outputs.version }}.dmg"
+          DMG="$RUNNER_TEMP/$APP_SLUG-${{ steps.ver.outputs.version }}.dmg"
           create-dmg \
             --volname "$APP_NAME" --window-size 540 380 --icon-size 110 \
             --icon "$APP_NAME.app" 150 190 --app-drop-link 390 190 \
@@ -329,7 +336,7 @@ jobs:
           # location is deterministic, and the search is scoped to that path rather than
           # globbing the whole of DerivedData.
           xcodebuild -resolvePackageDependencies \
-            -project "$APP_NAME.xcodeproj" -scheme "$SCHEME" \
+            -project "$APP_SLUG.xcodeproj" -scheme "$SCHEME" \
             -derivedDataPath "$RUNNER_TEMP/dd" >/dev/null
           SIGN_UPDATE="$(find "$RUNNER_TEMP/dd/SourcePackages/artifacts" -type f -name sign_update -perm -u+x 2>/dev/null | head -1 || true)"
           if [ -z "$SIGN_UPDATE" ]; then

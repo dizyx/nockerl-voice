@@ -10,8 +10,9 @@ set -euo pipefail
 
 SCHEME="${SCHEME:-NockerlVoice}"
 CONFIG="${CONFIG:-Release}"
-APP="${APP:-NockerlVoice.app}"
-APP_NAME="${APP_NAME:-NockerlVoice}"
+# Spaced, matching PRODUCT_NAME. Every use of it below is quoted.
+APP="${APP:-Nockerl Voice.app}"
+APP_NAME="${APP_NAME:-Nockerl Voice}"
 DERIVED="${DERIVED:-$HOME/Library/Developer/Xcode/DerivedData/NockerlVoice-deploy}"
 
 # Resolve the signing identity and unlock the signing keychain. Shared with build-dev.sh,
