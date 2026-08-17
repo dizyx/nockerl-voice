@@ -107,7 +107,10 @@ final class Updater: ObservableObject {
         // only while automatic checks are enabled, because calling it later interferes with
         // the scheduler.
         if updater.automaticallyChecksForUpdates {
+            DebugLog.write("update: launch check scheduled (automatic checks on)")
             DispatchQueue.main.async { updater.checkForUpdatesInBackground() }
+        } else {
+            DebugLog.write("update: no launch check (automatic checks off)")
         }
     }
 
@@ -116,6 +119,7 @@ final class Updater: ObservableObject {
     /// This is the ONLY entry point that may put a visible update flow on screen, and it can
     /// only be reached by the user picking the menu item. Discovery never calls it.
     func checkForUpdates() {
+        DebugLog.write("update: user-initiated check requested (configured=\(Updater.isConfigured))")
         updater?.checkForUpdates()
     }
 

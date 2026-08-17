@@ -129,7 +129,22 @@ final class NockerlUpdateDriver: NSObject, SPUUserDriver {
     /// no queue and no retry: a missed panel is recoverable (the quiet indicator still shows,
     /// and the menu item still works), whereas an interrupted dictation is not.
     private func present(_ phase: UpdatePhase) {
-        guard !DictationActivity.shared.isBusy else { return }
+        // EVERY phase transition is logged, including the ones that are refused.
+        //
+        // The update path had no instrumentation at all, which is why a broken one could
+        // only be reported as "nothing happens" and had to be diagnosed by reading source.
+        // A signature rejection, a failed download and a silently suppressed panel are
+        // three completely different problems that look identical from the outside, and
+        // the log is what separates them.
+        //
+        // The suppressed case is logged deliberately. `present` refuses while a dictation
+        // is in flight, which is correct, but an update that vanishes for a reason the user
+        // cannot see is exactly the kind of thing that gets reported as a bug.
+        guard !DictationActivity.shared.isBusy else {
+            DebugLog.write("update: phase \(phase) SUPPRESSED, dictation in flight")
+            return
+        }
+        DebugLog.write("update: \(phase)")
         model.setPhase(phase)
         model.isPanelPresented = true
     }
@@ -247,10 +262,14 @@ final class NockerlUpdateDriver: NSObject, SPUUserDriver {
     }
 
     func showUpdateInstalledAndRelaunched(_ relaunched: Bool, acknowledgement: @escaping () -> Void) {
+        // The last line the OLD binary writes. If an update goes wrong after this point,
+        // the evidence is the absence of a matching launch line from the new one.
+        DebugLog.write("update: installed, relaunched=\(relaunched)")
         acknowledgement()
     }
 
     func dismissUpdateInstallation() {
+        DebugLog.write("update: session dismissed")
         // Sparkle is tearing the session down. Release anything still held so the updater can
         // never be left waiting on a reply that will not come, then return to a clean state.
         model.drainPendingReplies()
