@@ -412,6 +412,71 @@ jobs:
           # design, and is exactly what every client checks against the public key.
           cat "$RUNNER_TEMP/appcast.xml"
 
+      # Keeps the Homebrew cask in step with the release that just published.
+      #
+      # This was a manual edit after every tag, and it drifted exactly as you would expect:
+      # by 1.0.14 the app on disk was 1.0.14, Homebrew's record said 1.0.12 and the cask
+      # still offered 1.0.13. Three numbers for one app, and `brew install` failed trying to
+      # reconcile them.
+      #
+      # NEVER FAILS THE RELEASE. The DMG and the update feed are the product; a stale cask
+      # is an inconvenience. If the token is missing or the tap rejects the write, this says
+      # so loudly and the release still stands.
+      #
+      # Needs a token that can write to a DIFFERENT repository, which the automatic
+      # GITHUB_TOKEN cannot: it is scoped to this repo alone. HOMEBREW_TAP_TOKEN should be a
+      # fine-grained personal access token limited to dizyx/homebrew-tap with Contents:
+      # read and write, and nothing else.
+      - name: Update the Homebrew cask
+        continue-on-error: true
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -uo pipefail
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN is not set, so the cask still points at the previous release. Add a fine-grained PAT scoped to dizyx/homebrew-tap with Contents write, or bump Casks/nockerl-voice.rb by hand."
+            exit 0
+          fi
+          SHA256="$(shasum -a 256 "$DMG" | cut -d' ' -f1)"
+          echo "cask -> $VERSION / $SHA256"
+
+          API="https://api.github.com/repos/dizyx/homebrew-tap/contents/Casks/nockerl-voice.rb"
+          AUTH="Authorization: Bearer $TAP_TOKEN"
+          CUR="$(curl -sS -H "$AUTH" -H "Accept: application/vnd.github+json" "$API")"
+          BLOB="$(printf '%s' "$CUR" | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])')"
+          printf '%s' "$CUR" | python3 -c 'import base64,json,sys; sys.stdout.write(base64.b64decode(json.load(sys.stdin)["content"]).decode())' > cask.rb
+
+          # Only the two lines that carry the release identity. Everything else in the cask
+          # is hand-maintained and must survive untouched.
+          python3 - "$VERSION" "$SHA256" <<'PY'
+          import re, sys
+          version, sha = sys.argv[1], sys.argv[2]
+          text = open("cask.rb").read()
+          out = re.sub(r'version "[^"]+"', f'version "{version}"', text, count=1)
+          out = re.sub(r'sha256 "[a-f0-9]{64}"', f'sha256 "{sha}"', out, count=1)
+          if out == text:
+              print("::error::The cask did not change. Its version or sha256 line no longer matches what this step edits.")
+              sys.exit(1)
+          open("cask.rb", "w").write(out)
+          PY
+
+          B64="$(base64 < cask.rb | tr -d '\n')"
+          python3 - "$BLOB" "$B64" "$VERSION" > payload.json <<'PY'
+          import json, sys
+          blob, content, version = sys.argv[1], sys.argv[2], sys.argv[3]
+          ident = {"name": "Dizyx", "email": "hello@dizyx.com"}
+          json.dump({"message": f"Update Nockerl Voice to {version}", "content": content,
+                     "sha": blob, "branch": "main",
+                     "author": ident, "committer": ident}, sys.stdout)
+          PY
+          CODE="$(curl -sS -o resp.json -w '%{http_code}' -X PUT -H "$AUTH" \
+            -H "Accept: application/vnd.github+json" --data @payload.json "$API")"
+          if [ "$CODE" != "200" ] && [ "$CODE" != "201" ]; then
+            echo "::error::Cask update failed with HTTP $CODE"; cat resp.json; exit 1
+          fi
+          echo "cask updated"
+
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
