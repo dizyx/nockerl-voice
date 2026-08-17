@@ -26,6 +26,10 @@ final class Updater: ObservableObject {
     /// Nil until `start()` runs, and it stays nil while the build carries the placeholder key.
     private var updater: SPUUpdater?
 
+    /// Retained for the updater's lifetime, exactly like the driver: `SPUUpdater` holds its
+    /// delegate weakly, so without this the launch check would report into a freed object.
+    private var observer: UpdateObserver?
+
     /// Retained for the updater's lifetime. `SPUUpdater` does not own its user driver.
     private var driver: NockerlUpdateDriver?
 
@@ -57,12 +61,20 @@ final class Updater: ObservableObject {
         guard updater == nil, Self.isConfigured else { return }
 
         let driver = NockerlUpdateDriver()
+        // A DELEGATE, not nil. The background check reports here, not through the user
+        // driver, which is why the launch check appeared to do nothing: the log showed it
+        // being scheduled and then no phase transition ever followed. Sparkle's own
+        // documentation is explicit that `checkForUpdatesInBackground` may not present a
+        // found update immediately and that `didFindValidUpdate` / `updaterDidNotFindUpdate`
+        // are how you learn the outcome.
+        let observer = UpdateObserver()
         let updater = SPUUpdater(
             hostBundle: Bundle.main,
             applicationBundle: Bundle.main,
             userDriver: driver,
-            delegate: nil
+            delegate: observer
         )
+        self.observer = observer
 
         // PRIVACY: no anonymous system profile, ever. Belt and braces with Info.plist.
         updater.sendsSystemProfile = false
@@ -128,5 +140,43 @@ final class Updater: ObservableObject {
     /// re-presents the update through our driver with `state.userInitiated` true.
     func openDiscoveredUpdate() {
         updater?.checkForUpdates()
+    }
+}
+
+/// Watches the update cycle so a BACKGROUND check has somewhere to report.
+///
+/// The launch check looked broken and was not: the log showed
+/// `update: launch check scheduled` followed by no phase transition at all, because a
+/// background check reports through the updater DELEGATE rather than the user driver, and
+/// the delegate was nil. The outcome was being discarded.
+///
+/// Two jobs. It logs every outcome, so "the check never ran" and "the check ran and found
+/// nothing" stop looking identical from outside. And when a background check does find
+/// something, it drives the quiet indicator itself, so discovery cannot depend on whether
+/// Sparkle chose to present through the driver on that particular path.
+@MainActor
+final class UpdateObserver: NSObject, SPUUpdaterDelegate {
+    /// The same shared model the user driver writes to, matching how the driver reaches it.
+    private let model = UpdateModel.shared
+
+    nonisolated func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        MainActor.assumeIsolated {
+            DebugLog.write("update: background check FOUND \(item.displayVersionString)")
+            model.noteBackgroundDiscovery(version: item.displayVersionString)
+        }
+    }
+
+    nonisolated func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
+        MainActor.assumeIsolated { DebugLog.write("update: background check found nothing") }
+    }
+
+    nonisolated func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: (any Error)?) {
+        MainActor.assumeIsolated {
+            if let error {
+                DebugLog.write("update: cycle finished with error :: \(error.localizedDescription)")
+            } else {
+                DebugLog.write("update: cycle finished cleanly")
+            }
+        }
     }
 }

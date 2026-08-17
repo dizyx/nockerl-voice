@@ -55,6 +55,18 @@ final class UpdateModel: ObservableObject {
 
     fileprivate func setPhase(_ phase: UpdatePhase) { self.phase = phase }
 
+    /// A background check found something. Called from the updater delegate rather than the
+    /// user driver, because that is where a background check reports.
+    ///
+    /// Sets the quiet indicator ONLY. It holds no Sparkle callback, so acting on it has to
+    /// run a real user-initiated check, which is exactly what the menu item and the sidebar
+    /// row already do. Anything more would be presenting an update the user never asked to
+    /// see, which is the behaviour this whole design avoids.
+    func noteBackgroundDiscovery(version: String) {
+        guard case .idle = phase else { return }
+        phase = .available(version: version)
+    }
+
     /// Reply blocks Sparkle handed us, held until the user answers in OUR UI.
     ///
     /// Sparkle's contract is that each of these is invoked EXACTLY once. They are cleared as

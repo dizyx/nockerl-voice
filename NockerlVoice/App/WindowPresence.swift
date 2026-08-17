@@ -3,8 +3,9 @@ import Foundation
 
 /// Tracks the open/close lifecycle of the app's primary windows.
 ///
-/// It no longer touches the activation policy. See `apply()` for why: the hybrid Dock
-/// behaviour this once implemented could leave the app running and unreachable.
+/// The activation policy is promoted ONE WAY, from accessory to regular, the first time a
+/// primary window opens, and never demoted. See `apply()`: the demotion is what could leave
+/// the app running and unreachable.
 ///
 /// A COUNTER (not a boolean) is deliberate: at first run the app auto-opens BOTH the
 /// dashboard and the onboarding window (the latter whenever a required permission is
@@ -56,29 +57,32 @@ final class WindowPresence {
         windowClosed()
     }
 
+    /// Set once the app has been promoted to `.regular`. It is never demoted again.
+    private var promoted = false
+
     private func apply() {
-        // THE POLICY IS NEVER CHANGED. This deliberately does nothing to it, and the
-        // counter above survives only because `isDashboardOpen` is still a real question
-        // that other code asks.
+        // ONE WAY ONLY. Accessory at launch, regular the moment a primary window opens,
+        // and NEVER back again for the life of the process.
         //
-        // It used to flip to `.regular` while a window was open and back to `.accessory`
-        // when the last one closed. That downward transition could leave the app
-        // completely unreachable: closing the dashboard with the red button removed the
-        // Dock icon AND the menu bar item, with the app still running and no way to reach
-        // it short of Activity Monitor. Observed on 2026-08-17.
+        // The downward transition is the one that broke: closing the dashboard with the
+        // red button removed the Dock icon AND the menu bar item, leaving the app running
+        // and unreachable short of Activity Monitor. An app may have a Dock icon and a menu
+        // bar or neither, never the menu bar alone while regular, and moving between the
+        // policies can leave the menu disabled until the user clicks the Dock icon that the
+        // same transition just took away.
         //
-        // The cause is a documented AppKit limitation, not a bug in this file. An app may
-        // have a Dock icon and a menu bar, or neither; it cannot have the menu bar alone
-        // while `.regular`. Worse, moving between policies is unreliable in exactly this
-        // direction: the menu can be left disabled and unclickable until the user clicks
-        // the Dock icon, which the same transition has just taken away. A user with no
-        // Terminal would have had to reboot.
+        // The previous fix was to stop changing the policy at all. That removed the crash
+        // but also the app: no Dock icon, no launcher entry, and no application menu to
+        // quit from, so it stopped behaving like a real app at all. Staying regular keeps
+        // every one of those and still never performs the transition that strands it.
         //
-        // Staying `.accessory` is not a workaround, it is what `LSUIElement` in the
-        // Info.plist already declares this app to be, and it is the state the app launches
-        // in and works correctly in. Windows still open, still take focus and still work
-        // under `.accessory`; only the Dock icon and the Cmd-Tab entry are given up while
-        // one is open. That is a real cost, and it buys back an entire class of failure
-        // where the app can be running and impossible to reach.
+        // The cost is a Dock icon that outlives the window that earned it, until the app
+        // quits. That is ordinary Mac behaviour, and it is the right side of this trade:
+        // an app that is visible when it has nothing open is a much smaller problem than an
+        // app that is invisible while running.
+        guard openCount > 0, !promoted else { return }
+        promoted = true
+        NSApp.setActivationPolicy(.regular)
     }
+
 }
