@@ -39,7 +39,19 @@ struct TranscriptionSection: View {
             .padding(NockerlSpace.space6)
             .frame(maxWidth: 640, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
+            // No elastic bounce when the content already fits, which on this fixed
+            // 880x600 window is almost always the case. The ScrollView is the ROOT of this
+            // section, and a root ScrollView on macOS rubber-bands under a trackpad even
+            // with nowhere to scroll to, so the page felt loose. Vocabulary, Styles and
+            // History never did that, because their roots are fixed VStacks with
+            // ScrollViews only around the one region that genuinely scrolls.
+            //
+            // `.basedOnSize` rather than deleting the ScrollView. Deleting it would clip
+            // anything that ever does overflow, and these pages can: a long provider list,
+            // a narrower window, larger accessibility text. Real scrolling stays, and only
+            // the bounce with nothing behind it goes.
         }
+        .scrollBounceBehavior(.basedOnSize)
         .onAppear { tabValue = (settings.defaultEngine ?? .openrouter).rawValue }
     }
 }

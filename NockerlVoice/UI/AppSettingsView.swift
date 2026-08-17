@@ -92,6 +92,17 @@ struct AppSettingsSection: View {
             .frame(maxWidth: 640, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // No elastic bounce when the content already fits, which on this fixed 880x600
+        // window is almost always the case. The ScrollView is the ROOT of this section, and
+        // a root ScrollView on macOS rubber-bands under a trackpad even with nowhere to
+        // scroll to, so the page felt loose. Vocabulary, Styles and History never did that,
+        // because their roots are fixed VStacks with ScrollViews only around the one region
+        // that genuinely scrolls.
+        //
+        // `.basedOnSize` rather than deleting the ScrollView. Deleting it would clip
+        // anything that ever does overflow, and this page can: more microphones, larger
+        // accessibility text. Real scrolling stays, and only the empty bounce goes.
+        .scrollBounceBehavior(.basedOnSize)
         // Pinned to the PANE's corner via an overlay rather than appended to the stack, so
         // it stays put instead of riding under the well and scrolling away. Muted and small:
         // it is a reference you go looking for, never something competing with the settings.

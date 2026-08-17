@@ -174,7 +174,19 @@ struct DashboardSection: View {
             .frame(maxWidth: NockerlGrid.containerMd, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // No elastic bounce when the content already fits, which on this fixed 880x600
+        // window is almost always. The ScrollView is the ROOT of this section, and a root
+        // ScrollView on macOS rubber-bands on a trackpad even with nothing to scroll to, so
+        // the page felt loose and unfinished. Vocabulary, Styles and History never did that
+        // because their roots are fixed VStacks with ScrollViews only around the one region
+        // that genuinely scrolls.
+        //
+        // `.basedOnSize` rather than removing the ScrollView. Removing it would clip
+        // anything that ever did overflow, and these pages can: a long provider list, a
+        // narrower window, larger accessibility text. This keeps real scrolling and takes
+        // away only the bounce that had nothing to scroll.
         .scrollIndicators(.never)
+        .scrollBounceBehavior(.basedOnSize)
     }
 
     /// The words this user actually says most, as cyan `word │ count` chips. Full width and
