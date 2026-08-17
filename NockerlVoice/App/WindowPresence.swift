@@ -1,13 +1,10 @@
 import AppKit
 import Foundation
 
-/// Tracks the open/close lifecycle of the app's primary windows and drives the
-/// Dock activation policy.
+/// Tracks the open/close lifecycle of the app's primary windows.
 ///
-/// Nockerl Voice is normally a menu-bar app (`LSUIElement`, no Dock icon), but it
-/// should become a REAL app while a primary window is up: `.regular` puts it in the
-/// Dock and Cmd-Tab so the window has a normal app presence; `.accessory` (no Dock
-/// icon) returns once every primary window has closed.
+/// It no longer touches the activation policy. See `apply()` for why: the hybrid Dock
+/// behaviour this once implemented could leave the app running and unreachable.
 ///
 /// A COUNTER (not a boolean) is deliberate: at first run the app auto-opens BOTH the
 /// dashboard and the onboarding window (the latter whenever a required permission is
@@ -15,9 +12,8 @@ import Foundation
 /// open must NOT drop the app back to `.accessory`: the Dock icon should stay until
 /// the LAST primary window closes. The count is the minimal correct primitive.
 ///
-/// `@MainActor`: `NSApp.setActivationPolicy` must run on the main thread, and the
-/// view `.onAppear`/`.onDisappear` hooks that drive it are main-thread by
-/// construction.
+/// `@MainActor`: the view `.onAppear`/`.onDisappear` hooks that drive this are
+/// main-thread by construction, and `isDashboardOpen` is read from main-actor code.
 @MainActor
 final class WindowPresence {
     /// Shared because it is app-level state referenced from view lifecycle hooks
@@ -61,10 +57,28 @@ final class WindowPresence {
     }
 
     private func apply() {
-        // `.regular` only while at least one primary window is open; `.accessory`
-        // (menu-bar-only, no Dock icon) once the last one closes. This is the
-        // hybrid Dock behavior: regular while a primary window is open, accessory
-        // otherwise.
-        NSApp.setActivationPolicy(openCount > 0 ? .regular : .accessory)
+        // THE POLICY IS NEVER CHANGED. This deliberately does nothing to it, and the
+        // counter above survives only because `isDashboardOpen` is still a real question
+        // that other code asks.
+        //
+        // It used to flip to `.regular` while a window was open and back to `.accessory`
+        // when the last one closed. That downward transition could leave the app
+        // completely unreachable: closing the dashboard with the red button removed the
+        // Dock icon AND the menu bar item, with the app still running and no way to reach
+        // it short of Activity Monitor. Observed on 2026-08-17.
+        //
+        // The cause is a documented AppKit limitation, not a bug in this file. An app may
+        // have a Dock icon and a menu bar, or neither; it cannot have the menu bar alone
+        // while `.regular`. Worse, moving between policies is unreliable in exactly this
+        // direction: the menu can be left disabled and unclickable until the user clicks
+        // the Dock icon, which the same transition has just taken away. A user with no
+        // Terminal would have had to reboot.
+        //
+        // Staying `.accessory` is not a workaround, it is what `LSUIElement` in the
+        // Info.plist already declares this app to be, and it is the state the app launches
+        // in and works correctly in. Windows still open, still take focus and still work
+        // under `.accessory`; only the Dock icon and the Cmd-Tab entry are given up while
+        // one is open. That is a real cost, and it buys back an entire class of failure
+        // where the app can be running and impossible to reach.
     }
 }
