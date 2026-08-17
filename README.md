@@ -46,8 +46,14 @@ Be clear-eyed about this: the app does nothing useful until one of those is set 
 Homebrew:
 
 ```
-brew install --cask dizyx/tap/nockerl-voice
+brew tap dizyx/tap
+brew install --cask nockerl-voice
 ```
+
+The extra `tap` line is not optional and is not specific to this app: Homebrew requires
+any third-party repository to be added explicitly before it will install from it. Apps
+that install in one command live in Homebrew's own cask repository, which ships with
+Homebrew itself.
 
 Or download the notarized `.dmg` from the [latest release](../../releases/latest) and drag Nockerl Voice into your Applications folder.
 
