@@ -76,6 +76,31 @@ Nockerl Voice needs two macOS permissions and asks for each one the first time i
 
 If you point the app at a custom endpoint on your local network, macOS may also ask for the Local Network permission.
 
+## Uninstall
+
+Homebrew removes the app and the files it created:
+
+```
+brew uninstall --zap --cask nockerl-voice
+```
+
+Without Homebrew, drag the app to the Trash and remove these if you want them gone:
+
+```
+~/Library/Application Support/NockerlVoice     # kept audio recordings
+~/Library/Logs/NockerlVoice                    # debug log
+~/Library/Preferences/com.dizyx.nockerlvoice.plist
+```
+
+Your API key is in the login Keychain under `com.dizyx.nockerlvoice` and is not removed
+by either route. Delete it in Keychain Access if you want it gone.
+
+Your transcription history lives at `~/Library/Application Support/default.store`, which
+is SwiftData's shared default rather than a folder named for this app. Neither the app nor
+Homebrew deletes it, deliberately: another application can legitimately own that same
+file, and removing it during an uninstall could take someone else's data with it. Delete
+it by hand only if you know nothing else is using it.
+
 ## Privacy
 
 - **No accounts, no telemetry, no analytics.** Nothing about your usage is collected or phoned home.
