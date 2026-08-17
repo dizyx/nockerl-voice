@@ -64,7 +64,42 @@ final class UpdateModel: ObservableObject {
     /// see, which is the behaviour this whole design avoids.
     func noteBackgroundDiscovery(version: String) {
         guard case .idle = phase else { return }
+        // STICKY. Sparkle tears the background session down immediately after reporting,
+        // and that teardown used to reset the phase, so the row appeared and vanished in
+        // the same instant. A discovery is a fact about the world, not part of a session:
+        // 1.0.11 still exists after the check that found it has ended.
+        discovered = version
         phase = .available(version: version)
+    }
+
+    /// A version found by a background check, held across session teardown.
+    private(set) var discovered: String?
+
+    /// Act on the row. Runs a real user-initiated check when there is no live session,
+    /// which is ALWAYS the case for a background discovery.
+    ///
+    /// This is not the same as `respond(.install)`. That answers a question Sparkle is
+    /// currently asking, and after a background check Sparkle is asking nothing: the
+    /// session is already over and no reply is held. Calling it would have silently done
+    /// nothing, which is the same dead end this whole file was written to remove. A real
+    /// check re-runs the flow with a live reply behind it.
+    func install() {
+        if updateChoiceReply != nil || installReply != nil {
+            respond(.install)
+        } else {
+            Updater.shared.openDiscoveredUpdate()
+        }
+    }
+
+    /// The user said Later. Clears the sticky discovery too, because "not now" means the
+    /// row should go away rather than reappear the moment the session ends.
+    func postpone() {
+        discovered = nil
+        if updateChoiceReply != nil || installReply != nil {
+            respond(.dismiss)
+        } else {
+            setPhase(.idle)
+        }
     }
 
     /// Reply blocks Sparkle handed us, held until the user answers in OUR UI.
@@ -310,9 +345,17 @@ final class NockerlUpdateDriver: NSObject, SPUUserDriver {
     func dismissUpdateInstallation() {
         DebugLog.write("update: session dismissed")
         // Sparkle is tearing the session down. Release anything still held so the updater can
-        // never be left waiting on a reply that will not come, then return to a clean state.
+        // never be left waiting on a reply that will not come.
         model.drainPendingReplies()
-        model.setPhase(.idle)
+        // A background discovery SURVIVES this. Sparkle ends the session immediately after
+        // reporting a found update, and resetting to idle here is what made the row flash
+        // and disappear: the log showed FOUND and then "session dismissed" one line later.
+        // The session is over; the update still exists.
+        if let discovered = model.discovered {
+            model.setPhase(.available(version: discovered))
+        } else {
+            model.setPhase(.idle)
+        }
         model.isPanelPresented = false
         expectedLength = 0
         received = 0

@@ -132,14 +132,17 @@ struct UpdateNavRow: View {
             HStack(spacing: NockerlSpace.space2) {
                 NockerlButton("Install", variant: .primary, size: .sm) {
                     confirming = false
-                    model.respond(.install)
+                    // `install()`, not `respond(.install)`. After a background discovery
+                    // Sparkle holds no reply, so responding would answer a question nobody
+                    // is asking and silently do nothing.
+                    model.install()
                 }
                 // `.dismiss`, NOT `.skip`. Skip tells Sparkle to never offer this version
                 // again, which is a far bigger decision than "not now" and not what a
                 // Later button means to anyone.
                 NockerlButton("Later", variant: .ghost, size: .sm) {
                     confirming = false
-                    model.respond(.dismiss)
+                    model.postpone()
                 }
             }
         }

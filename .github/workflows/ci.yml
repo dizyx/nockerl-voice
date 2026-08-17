@@ -42,9 +42,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Prose gate: fail fast on em-dash / en-dash violations across every tracked
-      # file BEFORE spending time on xcodegen + a full build. Bare form (no
-      # --staged) = check every tracked file, matching the pre-commit hook but as
+      # RESTORED. This step was deleted by accident while removing the prose gate, and
+      # every push failed from that moment on with "xcodebuild: error: Unable to read
+      # project 'NockerlVoice.xcodeproj'". That message names the project rather than the
+      # toolchain, which is why it read like a rename problem rather than a missing step.
+      #
+      # The runner image ships several Xcodes and defaults to an older one. xcodegen emits
+      # project format 77, which needs Xcode 16 or newer, so an older default cannot read
+      # the project it just generated. The release workflow kept its copy of this step,
+      # which is exactly why releases stayed green while CI went red.
+      - name: Select the newest installed Xcode
+        run: |
+          LATEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$LATEST" ]; then echo "No Xcode_*.app found on the runner" >&2; exit 1; fi
+          echo "Selected $LATEST"
+          echo "DEVELOPER_DIR=$LATEST/Contents/Developer" >> "$GITHUB_ENV"
 
       # A conflicted merge can reach a branch when a push is chained after a
       # `git merge` that failed: the merge stops, the push still runs, and the
