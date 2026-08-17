@@ -110,12 +110,18 @@ struct DashboardView: View {
                 .padding(.horizontal, NockerlSpace.space2)
             }
 
-            // Directly under the nav items, so an update reads as the next thing in the
-            // list rather than as chrome. Renders nothing at all unless there is news, so
-            // the sidebar is unchanged on almost every launch.
-            UpdateNavRow()
-
             Spacer(minLength: 0)
+
+            // Pinned directly above Settings rather than trailing the nav items. The rows
+            // above are DESTINATIONS: each selects a section and the sidebar holds a
+            // persistent selection among them. This is not one of those. It is a transient
+            // status affordance that acts and then disappears, and in that column it read
+            // as a seventh place to go.
+            //
+            // At the bottom it belongs to the same group as Settings, app-level rather than
+            // content-level, in a region the eye already treats as chrome. It still renders
+            // nothing unless there is news, so almost every launch looks unchanged.
+            UpdateNavRow()
 
             // Settings cog, pinned to the bottom of the panel.
             NockerlNavRow(

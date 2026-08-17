@@ -1,7 +1,7 @@
 import NockerlDesign
 import SwiftUI
 
-/// The entire update interface, as one thin row under the sidebar nav.
+/// The entire update interface, as one thin row pinned above Settings in the sidebar.
 ///
 /// This exists because there was no update interface at all. `UpdateModel` published a
 /// phase and an `isPanelPresented` flag, `UpdateDriver` drove them faithfully, and NOTHING
@@ -15,6 +15,11 @@ import SwiftUI
 /// by a global hotkey, so an update must never take focus or cover what someone is dictating
 /// into. A row in a sidebar the user is already looking at can carry the whole flow, from
 /// discovery through to relaunch, without a single modal.
+///
+/// It sits ABOVE SETTINGS rather than below the nav items. Those are destinations, each
+/// selecting a section and holding a persistent selection; this is a transient thing that
+/// acts and then disappears, so among them it read as a seventh place to go. At the bottom
+/// it joins Settings as app-level chrome, which is what it is.
 ///
 /// It renders NOTHING while idle, so the sidebar is unchanged on the overwhelming majority
 /// of launches. Every other state DOES render, including "up to date", because that state
