@@ -121,72 +121,73 @@ struct DashboardSection: View {
 
     /// The dashboard proper, once there is something to show.
     private var stats: some View {
-        ScrollView {
-            // space3: the SAME gap the stat grid uses internally, so the space above/below
-            // the Most Frequent Words card matches the space between two stat tiles. (It was
-            // space4, which made the section gaps visibly wider than the tile gaps.)
-            VStack(alignment: .leading, spacing: NockerlSpace.space3) {
-                SectionTitle(.dashboard)
-
-                // NockerlStatCard, the metrics-tile canon, replaces
-                // the local StatCard/ProcessingCard compositions.
-                LazyVGrid(columns: columns, spacing: NockerlSpace.space3) {
-                    // All tiles take the compact density (32pt plate /
-                    // space3 / space2) so the six-tile grid + chart fit the 880×600
-                    // dashboard without scrolling.
-                    // Opt-in tint (pin NockerlStatCard.swift L120 `tint:
-                    // NockerlStatTint? = nil`; soft icon-plate wash). Only the two
-                    // NON-WARM sanctioned hues are used: `.accent` (cyan, L67→
-                    // accentPrimary) and `.success` (green, L70→statusSuccess); the
-                    // warm `.warning`/`.danger` stay status-reserved (none here).
-                    // Mapping: counts → cyan; durations → green; providers by
-                    // identity (Local = green on-device/healthy, Cloud = cyan cloud).
-                    // `gradient: true` (pin NockerlStatCard.swift
-                    // L122 `gradient: Bool = false` → forwards to NockerlCard L147): a
-                    // SUBTLE theme-following 160° diagonal cardSurface2→cardSurface1 sheen
-                    // (~1-step surface delta, NOT the loud featured cyan). Default false =
-                    // byte-identical flat fill; opt-in is purely additive.
-                    // Counts are locale-formatted (1,234 not 1234): large totals were
-                    // unreadable as bare digits.
-                    NockerlStatCard(label: "Transcriptions", value: records.count.formatted(), density: .compact, tint: .accent, iconMode: .inset) {
-                        Image(systemName: "waveform")
-                    }
-                    NockerlStatCard(label: "Words transcribed", value: totalWords.formatted(), density: .compact, tint: .accent, iconMode: .inset) {
-                        Image(systemName: "textformat")
-                    }
-                    NockerlStatCard(label: "Total time", value: duration(durations.reduce(0, +)), density: .compact, tint: .accent, iconMode: .inset) {
-                        Image(systemName: "clock")
-                    }
-                    NockerlStatCard(label: "Longest", value: duration(durations.max() ?? 0), density: .compact, tint: .accent, iconMode: .inset) {
-                        Image(systemName: "arrow.up.right")
-                    }
-                    // The Local / Cloud average-processing-time tiles were removed. They
-                    // reported infrastructure latency rather than anything about the user's
-                    // dictation. The freed cell is where the Most Frequent Words card lands.
-                }
-
-                // No empty branch here any more: `body` routes to `gettingStarted` before
-                // this is ever built, so by this point there is at least one record.
-                frequentWordsCard
-                chartCard
-            }
-            .padding(NockerlSpace.space6)
-            .frame(maxWidth: NockerlGrid.containerMd, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        // No elastic bounce when the content already fits, which on this fixed 880x600
-        // window is almost always. The ScrollView is the ROOT of this section, and a root
-        // ScrollView on macOS rubber-bands on a trackpad even with nothing to scroll to, so
-        // the page felt loose and unfinished. Vocabulary, Styles and History never did that
-        // because their roots are fixed VStacks with ScrollViews only around the one region
-        // that genuinely scrolls.
+        // NO ScrollView, deliberately. The page is sized to the window rather than
+        // allowed to exceed it, which is the shape Vocabulary, Styles and History already
+        // use: a fixed root, with scrolling only where content genuinely varies.
         //
-        // `.basedOnSize` rather than removing the ScrollView. Removing it would clip
-        // anything that ever did overflow, and these pages can: a long provider list, a
-        // narrower window, larger accessibility text. This keeps real scrolling and takes
-        // away only the bounce that had nothing to scroll.
-        .scrollIndicators(.never)
-        .scrollBounceBehavior(.basedOnSize)
+        // It was a ScrollView holding FIXED heights tuned against one data shape. The chart
+        // was pinned at 156, a number measured off a screenshot taken when there were three
+        // frequent words, and the words card had a minimum but no maximum. With more
+        // dictation its chips wrap to a third row, the card grows, and the total passes 600,
+        // so the whole dashboard scrolled by a few points. Re-tuning that number would only
+        // move which data shape breaks it.
+        //
+        // The chart ABSORBS the remainder instead: everything above it is naturally sized
+        // and it takes what is left, so the page fits exactly at any chip count with no
+        // measurement to keep redoing.
+        //
+        // space3: the SAME gap the stat grid uses internally, so the space above and below
+        // the Most Frequent Words card matches the space between two stat tiles.
+        VStack(alignment: .leading, spacing: NockerlSpace.space3) {
+            SectionTitle(.dashboard)
+
+            // NockerlStatCard, the metrics-tile canon, replaces
+            // the local StatCard/ProcessingCard compositions.
+            LazyVGrid(columns: columns, spacing: NockerlSpace.space3) {
+                // All tiles take the compact density (32pt plate /
+                // space3 / space2) so the six-tile grid + chart fit the 880×600
+                // dashboard without scrolling.
+                // Opt-in tint (pin NockerlStatCard.swift L120 `tint:
+                // NockerlStatTint? = nil`; soft icon-plate wash). Only the two
+                // NON-WARM sanctioned hues are used: `.accent` (cyan, L67→
+                // accentPrimary) and `.success` (green, L70→statusSuccess); the
+                // warm `.warning`/`.danger` stay status-reserved (none here).
+                // Mapping: counts → cyan; durations → green; providers by
+                // identity (Local = green on-device/healthy, Cloud = cyan cloud).
+                // `gradient: true` (pin NockerlStatCard.swift
+                // L122 `gradient: Bool = false` → forwards to NockerlCard L147): a
+                // SUBTLE theme-following 160° diagonal cardSurface2→cardSurface1 sheen
+                // (~1-step surface delta, NOT the loud featured cyan). Default false =
+                // byte-identical flat fill; opt-in is purely additive.
+                // Counts are locale-formatted (1,234 not 1234): large totals were
+                // unreadable as bare digits.
+                NockerlStatCard(label: "Transcriptions", value: records.count.formatted(), density: .compact, tint: .accent, iconMode: .inset) {
+                    Image(systemName: "waveform")
+                }
+                NockerlStatCard(label: "Words transcribed", value: totalWords.formatted(), density: .compact, tint: .accent, iconMode: .inset) {
+                    Image(systemName: "textformat")
+                }
+                NockerlStatCard(label: "Total time", value: duration(durations.reduce(0, +)), density: .compact, tint: .accent, iconMode: .inset) {
+                    Image(systemName: "clock")
+                }
+                NockerlStatCard(label: "Longest", value: duration(durations.max() ?? 0), density: .compact, tint: .accent, iconMode: .inset) {
+                    Image(systemName: "arrow.up.right")
+                }
+                // The Local / Cloud average-processing-time tiles were removed. They
+                // reported infrastructure latency rather than anything about the user's
+                // dictation. The freed cell is where the Most Frequent Words card lands.
+            }
+
+            // No empty branch here any more: `body` routes to `gettingStarted` before
+            // this is ever built, so by this point there is at least one record.
+            frequentWordsCard
+            chartCard
+        }
+        .padding(NockerlSpace.space6)
+        .frame(maxWidth: NockerlGrid.containerMd, alignment: .leading)
+        // maxHeight infinity is what gives the flexible chart something to expand into.
+        // Without it the stack hugs its content and the chart never claims the slack.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     /// The words this user actually says most, as cyan `word │ count` chips. Full width and
@@ -283,11 +284,12 @@ struct DashboardSection: View {
                 // rows so its height stops moving with how much the user has dictated,
                 // which is what makes a fixed chart height safe to tune against.
                 //
-                // The content is inside a ScrollView, so overshooting costs a scrollbar
-                // rather than clipped content. If it does scroll at 880×600, step back down
-                // the ladder 156 → 144 → 132. RUNTIME-UNVERIFIED: measured off a screenshot,
-                // not from a running layout.
-                .frame(height: 156)
+                // FLEXIBLE, with a floor. The chart is the one element here that reads
+                // fine across a range of heights, so it is the right place to absorb the
+                // slack: it grows into a sparse dashboard and gives way when the words card
+                // wraps to a third row. The floor stops it collapsing to a sliver if
+                // everything above it grows at once.
+                .frame(minHeight: 110, maxHeight: .infinity)
                 .chartXAxis {
                     AxisMarks(values: .stride(by: .day, count: 6)) {
                         AxisValueLabel(format: .dateTime.month(.abbreviated).day())
