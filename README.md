@@ -11,6 +11,8 @@ Local-first speech-to-text for macOS. Double-tap the Right Command key, speak, a
 
 **[nockerl.ai/voice](https://nockerl.ai/voice/)** &nbsp;·&nbsp; [Download](../../releases/latest) &nbsp;·&nbsp; [Report an issue](../../issues)
 
+<img alt="Nockerl Voice dashboard: transcription and word counts, total and longest recording time, most frequent words, and a thirty day chart." src="https://nockerl.ai/shots/dashboard-1400.webp" width="860">
+
 </div>
 
 ---
