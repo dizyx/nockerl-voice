@@ -9,7 +9,24 @@ Local-first speech-to-text for macOS. Double-tap the Right Command key, speak, a
 [![License: MIT](https://img.shields.io/badge/License-MIT-0CC0DF.svg)](LICENSE)
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-0CC0DF.svg)](#requirements)
 
+**[nockerl.ai/voice](https://nockerl.ai/voice/)** &nbsp;·&nbsp; [Download](../../releases/latest) &nbsp;·&nbsp; [Report an issue](../../issues)
+
 </div>
+
+---
+
+**Contents**
+
+[What it is](#what-it-is) &nbsp;·&nbsp;
+[How you use it](#how-you-use-it) &nbsp;·&nbsp;
+[Requirements](#requirements) &nbsp;·&nbsp;
+[Install](#install) &nbsp;·&nbsp;
+[Permissions](#permissions) &nbsp;·&nbsp;
+[Uninstall](#uninstall) &nbsp;·&nbsp;
+[Privacy](#privacy) &nbsp;·&nbsp;
+[Build from source](#build-from-source) &nbsp;·&nbsp;
+[Contributing](#contributing) &nbsp;·&nbsp;
+[License](#license)
 
 ---
 
@@ -26,7 +43,6 @@ One engine is active at a time and you pick it in Settings; there is no hidden f
 
 ## How you use it
 
-<!-- TODO(mac): capture and add a screenshot of the recording HUD here before publishing. It cannot be produced off-device; see the completion report. -->
 
 1. **Double-tap the Right Command key** to start recording. A small heads-up display appears and shows your input level.
 2. Speak.
