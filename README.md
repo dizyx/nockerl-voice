@@ -34,7 +34,9 @@ Local-first speech-to-text for macOS. Double-tap the Right Command key, speak, a
 
 ## What it is
 
-Nockerl Voice is a menu-bar app, not a window you keep open. It captures your voice, transcribes it, and inserts the text into whatever app you are already using.
+Nockerl Voice captures your voice, transcribes it, and inserts the text into whatever app you are already using. Dictation is driven entirely by a hotkey, so you never have to switch to the app to use it.
+
+It starts in the menu bar and opens a dashboard window when you want one. Your recent transcripts and the dictation style picker sit on the menu itself; the dashboard holds your stats, a searchable history, custom vocabulary, styles, and Settings.
 
 You choose where transcription runs:
 
@@ -50,14 +52,14 @@ One engine is active at a time and you pick it in Settings; there is no hidden f
 2. Speak.
 3. **Single-tap the Right Command key** to stop. The audio is transcribed and the text is pasted at your cursor.
 
-Press Escape while recording to cancel it. Everything else lives behind the menu-bar icon: your most recent transcripts, a searchable history, dictation styles, custom vocabulary, and Settings.
+Press Escape while recording to cancel it. You never have to leave the app you are typing in.
 
 ## Requirements
 
 - macOS 14 (Sonoma) or later.
 - A transcription engine, which is **either** an OpenRouter API key **or** a custom OpenAI-compatible endpoint.
 
-Be clear-eyed about this: the app does nothing useful until one of those is set up. On first launch, open Settings, pick an engine, and paste your API key or enter your endpoint URL.
+Be clear-eyed about this: the app does nothing useful until one of those is set up. A welcome window walks you through it on first launch, covering the permissions below and your choice of engine. Everything it sets can be changed later in Settings.
 
 ## Install
 
@@ -80,12 +82,12 @@ Every release is built and published in the open, so you can confirm a download 
 ```
 gh attestation verify NockerlVoice-<version>.dmg --repo dizyx/nockerl-voice   # SLSA build provenance
 shasum -a 256 -c checksums.txt                                                # checksums
-spctl -a -vvv -t install /Applications/NockerlVoice.app                       # Apple notarization
+spctl -a -vvv -t install "/Applications/Nockerl Voice.app"                    # Apple notarization
 ```
 
 ## Permissions
 
-Nockerl Voice needs two macOS permissions and asks for each one the first time it is needed:
+Nockerl Voice needs two macOS permissions. The welcome window asks for both on first launch, and the menu bar offers a way back if either is missing later:
 
 - **Microphone**, to record your voice.
 - **Accessibility**, for both halves of the job: pasting the transcript into the frontmost app, and the system-wide `CGEventTap` behind the Right Command hotkey, so it works no matter which app is in front.
@@ -124,9 +126,11 @@ it by hand only if you know nothing else is using it.
 - **No accounts, no telemetry, no analytics.** Nothing about your usage is collected or phoned home.
 - Your API key lives in the macOS Keychain. Your history and settings stay on your Mac.
 - Raw audio is not kept by default. The text of a transcript is what gets saved to history.
-- The only network requests the app makes are to the transcription engine you configured.
+- The app makes two kinds of network request and no others: transcription, to the engine you configured, and an update check.
 
-Automatic update checking is not shipped yet. When it arrives (via [Sparkle](https://sparkle-project.org)), the app will make a network request to check for a newer version; that behavior will be documented here before it ships.
+Updates go through [Sparkle](https://sparkle-project.org). The app fetches a small feed from `nockerl.ai` at launch and about once a day after that, which necessarily tells that server your IP address and the version you are running. It sends nothing else. Sparkle can optionally report an anonymous system profile, listing things like your Mac model and OS version, and that is switched **off** in the build rather than left at its default. The feed itself is a public file, so you can read exactly what the app reads.
+
+Turn it off with "Check for updates automatically" in Settings. It is on by default; with it off, the app checks only when you explicitly ask it to.
 
 ## Build from source
 
